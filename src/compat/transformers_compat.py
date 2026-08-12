@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from packaging.version import InvalidVersion, Version
+
+
+SUPPORTED_TRANSFORMERS_SPEC = ">=4.40,<5.0"
 
 
 class TransformersCompatibilityError(RuntimeError):
@@ -56,6 +60,22 @@ def raise_transformers_diagnostic(requested_feature: str, reason: str) -> None:
     raise TransformersCompatibilityError(diagnostic.message())
 
 
+def _ensure_supported_transformers_version(requested_feature: str) -> None:
+    version = _transformers_version()
+    if version is None:
+        return
+    try:
+        parsed = Version(version)
+    except InvalidVersion:
+        return
+    if parsed < Version("4.40") or parsed >= Version("5.0"):
+        raise_transformers_diagnostic(
+            requested_feature,
+            f"unsupported transformers version {version!r}; install requirements.txt "
+            f"with transformers{SUPPORTED_TRANSFORMERS_SPEC}",
+        )
+
+
 def load_fast_tokenizer(
     *,
     name: str,
@@ -74,6 +94,7 @@ def load_fast_tokenizer(
         from transformers import AutoTokenizer
     except Exception as exc:
         raise_transformers_diagnostic("AutoTokenizer", repr(exc))
+    _ensure_supported_transformers_version("AutoTokenizer.from_pretrained")
     kwargs: dict[str, Any] = {"use_fast": True, "local_files_only": local_files_only}
     if extra_kwargs:
         kwargs.update(extra_kwargs)
@@ -155,6 +176,7 @@ def load_auto_model(
         from transformers import AutoModel
     except Exception as exc:
         raise_transformers_diagnostic(f"{stage}: AutoModel", repr(exc))
+    _ensure_supported_transformers_version(f"{stage}: AutoModel.from_pretrained")
     dtype = precision_to_torch_dtype(torch_dtype) if isinstance(torch_dtype, str) else torch_dtype
     kwargs: dict[str, Any] = {
         "revision": revision,
@@ -203,6 +225,7 @@ def load_auto_tokenizer(
         from transformers import AutoTokenizer
     except Exception as exc:
         raise_transformers_diagnostic(f"{stage}: AutoTokenizer", repr(exc))
+    _ensure_supported_transformers_version(f"{stage}: AutoTokenizer.from_pretrained")
     kwargs: dict[str, Any] = {
         "revision": revision,
         "local_files_only": local_files_only,
@@ -242,6 +265,7 @@ def load_auto_processor(
         from transformers import AutoProcessor
     except Exception as exc:
         raise_transformers_diagnostic(f"{stage}: AutoProcessor", repr(exc))
+    _ensure_supported_transformers_version(f"{stage}: AutoProcessor.from_pretrained")
     kwargs: dict[str, Any] = {
         "revision": revision,
         "local_files_only": local_files_only,
