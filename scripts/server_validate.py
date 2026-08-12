@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -84,6 +87,7 @@ def _run_phase(phase: Mapping[str, Any], *, output_root: Path, progress: bool) -
         leave=False,
     )
     for check in iterator:
+        iterator.set_postfix(check=str(check["name"]))
         results.append(_run_check(check, output_root=output_root))
     required_failed = any(item["required_for_training"] and item["status"] != "PASS" for item in results)
     return {
@@ -98,28 +102,92 @@ def _run_check(check: Mapping[str, Any], *, output_root: Path) -> dict[str, Any]
     if command[0] == "python":
         command[0] = sys.executable
     started = time.perf_counter()
-    result = subprocess.run(
-        command,
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=float(check.get("timeout_seconds", 0)) or None,
-    )
+    timeout = float(check.get("timeout_seconds", 0)) or None
+    log_name = str(check.get("log_file", f"{check['name']}.json")).replace("/", "_").replace("\\", "_")
+    logs_dir = output_root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    stream_log_path = logs_dir / f"{Path(log_name).stem}.stream.log"
+    tqdm.write(f"Running server validation check: {check['name']}")
+    tqdm.write(f"Command: {' '.join(command)}")
+
+    env = os.environ.copy()
+    if command[0] == sys.executable:
+        env["PYTHONUNBUFFERED"] = "1"
+    stdout_tail: deque[str] = deque(maxlen=4000)
+    stderr_tail: deque[str] = deque(maxlen=4000)
+    lock = threading.Lock()
+    timed_out = False
+    with stream_log_path.open("w", encoding="utf-8", errors="replace") as stream_log:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            env=env,
+        )
+        threads = [
+            threading.Thread(
+                target=_stream_pipe,
+                args=(process.stdout, sys.stdout, stream_log, stdout_tail, lock),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=_stream_pipe,
+                args=(process.stderr, sys.stderr, stream_log, stderr_tail, lock),
+                daemon=True,
+            ),
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            returncode = process.wait()
+        for thread in threads:
+            thread.join(timeout=2)
     record = {
         "name": check["name"],
         "command": check["command"],
         "required_for_training": bool(check["required_for_training"]),
-        "status": "PASS" if result.returncode == 0 else "FAIL",
-        "returncode": result.returncode,
+        "status": "PASS" if returncode == 0 and not timed_out else "FAIL",
+        "returncode": returncode,
+        "timed_out": timed_out,
         "runtime_seconds": time.perf_counter() - started,
-        "stdout_tail": result.stdout[-4000:],
-        "stderr_tail": result.stderr[-4000:],
+        "stdout_tail": "".join(stdout_tail),
+        "stderr_tail": "".join(stderr_tail),
+        "stream_log": str(stream_log_path),
         "expected_pass_criteria": check.get("expected_pass_criteria", []),
     }
-    log_name = str(check.get("log_file", f"{check['name']}.json")).replace("/", "_").replace("\\", "_")
-    (output_root / "logs").mkdir(parents=True, exist_ok=True)
-    (output_root / "logs" / log_name).write_text(json.dumps(record, indent=2), encoding="utf-8")
+    (logs_dir / log_name).write_text(json.dumps(record, indent=2), encoding="utf-8")
     return record
+
+
+def _stream_pipe(
+    pipe: Any,
+    terminal: Any,
+    stream_log: Any,
+    tail: deque[str],
+    lock: threading.Lock,
+) -> None:
+    if pipe is None:
+        return
+    try:
+        while True:
+            chunk = pipe.read(1)
+            if not chunk:
+                break
+            with lock:
+                tail.append(chunk)
+                stream_log.write(chunk)
+                terminal.write(chunk)
+                stream_log.flush()
+                terminal.flush()
+    finally:
+        pipe.close()
 
 
 if __name__ == "__main__":
