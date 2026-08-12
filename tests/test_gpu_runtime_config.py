@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+import copy
+
+import pytest
+
+from src.utils.config import (
+    ConfigError,
+    load_yaml_config,
+    validate_baseline_config,
+    validate_evidence_config,
+    validate_hera_config,
+)
+
+
+def _without_model_dtype(path: str) -> dict:
+    config = copy.deepcopy(load_yaml_config(path))
+    config["runtime"].pop("model_dtype")
+    return config
+
+
+def test_baseline_runtime_model_dtype_is_mandatory() -> None:
+    with pytest.raises(ConfigError, match="runtime.model_dtype"):
+        validate_baseline_config(_without_model_dtype("config/train_baseline_b0.yaml"), mode="train")
+
+
+def test_evidence_runtime_model_dtype_is_mandatory() -> None:
+    with pytest.raises(ConfigError, match="runtime.model_dtype"):
+        validate_evidence_config(_without_model_dtype("config/smoke_evidence.yaml"), mode="smoke")
+
+
+def test_hera_runtime_model_dtype_is_mandatory() -> None:
+    with pytest.raises(ConfigError, match="runtime.model_dtype"):
+        validate_hera_config(_without_model_dtype("config/train_hera.yaml"), mode="train")
