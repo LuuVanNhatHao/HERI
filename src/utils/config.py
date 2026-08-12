@@ -628,6 +628,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "runtime.device",
         "runtime.precision",
         "runtime.model_dtype",
+        "runtime.cuda_memory_logging.enabled",
         "runtime.gradient_checkpointing.enabled",
         "runtime.gradient_checkpointing.only_trainable_backbones",
         "runtime.gradient_checkpointing.backbones.siglip2",

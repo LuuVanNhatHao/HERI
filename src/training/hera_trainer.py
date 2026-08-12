@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import torch
+from torch import nn
 from tqdm.auto import tqdm
 
 from src.compat.transformers_compat import set_gradient_checkpointing
@@ -28,6 +29,9 @@ from src.utils.config import dump_yaml
 from src.utils.environment import collect_environment_metadata
 
 
+BYTES_PER_GIB = 1024**3
+
+
 def create_hera_run_dir(config: Mapping[str, Any]) -> Path:
     """Create a unique HERA run directory with canonical subdirectories."""
 
@@ -41,6 +45,41 @@ def create_hera_run_dir(config: Mapping[str, Any]) -> Path:
     return run_dir
 
 
+def _cuda_device_index(device: torch.device) -> int | None:
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return None
+    return int(device.index) if device.index is not None else int(torch.cuda.current_device())
+
+
+def _cuda_memory_summary(device: torch.device) -> dict[str, Any] | None:
+    """Return PyTorch CUDA memory state for the configured device."""
+
+    index = _cuda_device_index(device)
+    if index is None:
+        return None
+    props = torch.cuda.get_device_properties(index)
+    return {
+        "device": f"cuda:{index}",
+        "device_name": torch.cuda.get_device_name(index),
+        "allocated_gb": float(torch.cuda.memory_allocated(index) / BYTES_PER_GIB),
+        "reserved_gb": float(torch.cuda.memory_reserved(index) / BYTES_PER_GIB),
+        "max_allocated_gb": float(torch.cuda.max_memory_allocated(index) / BYTES_PER_GIB),
+        "total_gb": float(props.total_memory / BYTES_PER_GIB),
+    }
+
+
+def _cuda_memory_postfix(device: torch.device) -> str | None:
+    summary = _cuda_memory_summary(device)
+    if summary is None:
+        return None
+    return f"{summary['allocated_gb']:.1f}/{summary['reserved_gb']:.1f}GB"
+
+
+def _first_parameter_device(model: nn.Module) -> str:
+    first_parameter = next(model.parameters(), None)
+    return "no_parameters" if first_parameter is None else str(first_parameter.device)
+
+
 class HERATrainer:
     """Train/validate the complete HERA-DGM model with Phase-7 contracts."""
 
@@ -48,6 +87,7 @@ class HERATrainer:
         self.config = config
         self.device = torch.device(str(config["runtime"]["device"]))
         self.progress = bool(config["progress"]["enabled"])
+        self.cuda_memory_logging = bool(config["runtime"]["cuda_memory_logging"]["enabled"])
         self.run_dir = create_hera_run_dir(config)
         dump_yaml(config, self.run_dir / "effective_config.yaml")
         environment = collect_environment_metadata(Path.cwd())
@@ -58,6 +98,7 @@ class HERATrainer:
         )
         self.model = HERADGM.from_config(config, load_backbones=True).to(self.device)
         self.gradient_checkpointing = apply_configured_gradient_checkpointing(self.model, config)
+        self._log_cuda_runtime_state("after model load")
         self.loss_fn = HERAMultitaskLoss(config["loss"])
         self.precision = PrecisionManager(
             precision=str(config["runtime"]["precision"]),
@@ -230,6 +271,7 @@ class HERATrainer:
                 output.validate()
         self.model.train(was_training)
         self._lazy_initialized = True
+        self._log_cuda_runtime_state("after lazy initialization")
 
     def _train_one_epoch(
         self,
@@ -269,16 +311,21 @@ class HERATrainer:
                     scheduler=scheduler,
                     max_grad_norm=max_grad_norm,
                 )
-            iterator.set_postfix(
-                total=f"{losses.total.detach().item():.4f}",
-                L_attr=f"{losses.attribution.detach().item():.4f}",
-                L_bin=f"{losses.binary.detach().item():.4f}",
-                L_img=f"{losses.image_grounding.detach().item():.4f}",
-                L_txt=f"{losses.text_grounding.detach().item():.4f}",
-                L_ev=f"{losses.evidence.detach().item():.4f}",
-                lr=f"{optimizer.param_groups[0]['lr']:.2e}",
-                stage=_stage_name(self.config, self.state.epoch),
-            )
+            postfix = {
+                "total": f"{losses.total.detach().item():.4f}",
+                "L_attr": f"{losses.attribution.detach().item():.4f}",
+                "L_bin": f"{losses.binary.detach().item():.4f}",
+                "L_img": f"{losses.image_grounding.detach().item():.4f}",
+                "L_txt": f"{losses.text_grounding.detach().item():.4f}",
+                "L_ev": f"{losses.evidence.detach().item():.4f}",
+                "lr": f"{optimizer.param_groups[0]['lr']:.2e}",
+                "stage": _stage_name(self.config, self.state.epoch),
+            }
+            if self.cuda_memory_logging:
+                vram = _cuda_memory_postfix(self.device)
+                if vram is not None:
+                    postfix["vram"] = vram
+            iterator.set_postfix(**postfix)
         if total % accumulation != 0:
             self._optimizer_step(
                 optimizer=optimizer,
@@ -433,6 +480,29 @@ class HERATrainer:
             self.state.thresholds = _thresholds_from_mapping(threshold_data)
         if self.state.best_metric is not None:
             self._best_score_tuple = (float(self.state.best_metric),)
+
+    def _log_cuda_runtime_state(self, label: str) -> None:
+        if not self.cuda_memory_logging:
+            return
+        summary = _cuda_memory_summary(self.device)
+        if summary is None:
+            tqdm.write(
+                "CUDA runtime "
+                f"({label}): requested_device={self.device}, "
+                f"torch_cuda_available={torch.cuda.is_available()}"
+            )
+            return
+        tqdm.write(
+            "CUDA runtime "
+            f"({label}): requested_device={self.device}, "
+            f"active_device={summary['device']}, "
+            f"gpu={summary['device_name']}, "
+            f"model_device={_first_parameter_device(self.model)}, "
+            f"allocated={summary['allocated_gb']:.2f}GB, "
+            f"reserved={summary['reserved_gb']:.2f}GB, "
+            f"max_allocated={summary['max_allocated_gb']:.2f}GB, "
+            f"total={summary['total_gb']:.2f}GB"
+        )
 
 
 def apply_configured_gradient_checkpointing(model: HERADGM, config: Mapping[str, Any]) -> dict[str, bool]:

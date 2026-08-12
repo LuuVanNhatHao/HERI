@@ -250,6 +250,8 @@ runtime:
   device: cuda
   precision: bf16
   model_dtype: bf16
+  cuda_memory_logging:
+    enabled: true
   attn_implementation:
   gradient_checkpointing:
     enabled: true

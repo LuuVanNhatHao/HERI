@@ -3,11 +3,17 @@ from __future__ import annotations
 import math
 
 import pytest
+import torch
 
 from hera_phase7_fixtures import FixtureGraphReasoner, TinyBackbone, hera_test_config
 from phase2_fixtures import synthetic_batch, synthetic_features
 from src.models.hera import HERADGM
-from src.training.hera_trainer import _ensure_finite_losses, apply_configured_gradient_checkpointing
+from src.training.hera_trainer import (
+    _cuda_memory_postfix,
+    _cuda_memory_summary,
+    _ensure_finite_losses,
+    apply_configured_gradient_checkpointing,
+)
 from src.training.optimizer import apply_training_stage, create_optimizer, parameter_accounting
 
 
@@ -103,3 +109,8 @@ def test_hera_nan_guard_fails_with_context() -> None:
             batch_index=3,
             config=hera_test_config(),
         )
+
+
+def test_cuda_memory_helpers_are_inactive_for_cpu_device() -> None:
+    assert _cuda_memory_summary(torch.device("cpu")) is None
+    assert _cuda_memory_postfix(torch.device("cpu")) is None
