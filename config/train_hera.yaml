@@ -181,8 +181,8 @@ loss:
 
 training:
   epochs: 5
-  micro_batch_size: 16
-  gradient_accumulation_steps: 2
+  micro_batch_size: 32
+  gradient_accumulation_steps: 1
   max_grad_norm: 1.0
   resume_from:
   stages:
@@ -232,11 +232,11 @@ checkpointing:
   top_k: 1
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
   num_workers: 8
   pin_memory: true
   persistent_workers: true
-  prefetch_factor: 2
+  prefetch_factor: 4
   shuffle:
     train: true
     val: false
