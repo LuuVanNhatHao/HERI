@@ -208,6 +208,7 @@ class HERATrainer:
         if self._active_stage is not None and self._active_stage != stage:
             tqdm.write(f"STAGE {self._active_stage} -> STAGE {stage}")
         apply_training_stage(self.model, self.config, epoch=epoch)
+        self.gradient_checkpointing = apply_configured_gradient_checkpointing(self.model, self.config)
         if stage == "A":
             _assert_stage_a_backbones_frozen(self.model)
         self._active_stage = stage
@@ -439,12 +440,19 @@ def apply_configured_gradient_checkpointing(model: HERADGM, config: Mapping[str,
 
     settings = config["runtime"]["gradient_checkpointing"]
     enabled = bool(settings["enabled"])
+    only_trainable = bool(settings["only_trainable_backbones"])
     requested_backbones = settings["backbones"]
     actual: dict[str, bool] = {}
     for name, module in model.backbone_modules().items():
         requested = enabled and bool(requested_backbones.get(name, False))
+        if requested and only_trainable and not _has_trainable_parameters(module):
+            requested = False
         actual[name] = set_gradient_checkpointing(module, enabled=requested, stage=name)
     return actual
+
+
+def _has_trainable_parameters(module: nn.Module) -> bool:
+    return any(parameter.requires_grad for parameter in module.parameters())
 
 
 def _stage_name(config: Mapping[str, Any], epoch: int) -> str:

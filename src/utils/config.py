@@ -629,6 +629,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "runtime.precision",
         "runtime.model_dtype",
         "runtime.gradient_checkpointing.enabled",
+        "runtime.gradient_checkpointing.only_trainable_backbones",
         "runtime.gradient_checkpointing.backbones.siglip2",
         "runtime.gradient_checkpointing.backbones.dinov3",
         "runtime.gradient_checkpointing.backbones.deberta",

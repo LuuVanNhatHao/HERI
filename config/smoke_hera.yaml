@@ -253,6 +253,7 @@ runtime:
   attn_implementation:
   gradient_checkpointing:
     enabled: false
+    only_trainable_backbones: true
     backbones:
       siglip2: false
       dinov3: false

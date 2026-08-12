@@ -15,7 +15,10 @@ class PrecisionManager:
         self.requested = precision.lower()
         self.device = device
         self.actual = self._resolve_actual_precision()
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.actual == "fp16")
+        try:
+            self.scaler = torch.amp.GradScaler("cuda", enabled=self.actual == "fp16")
+        except (AttributeError, TypeError):
+            self.scaler = torch.cuda.amp.GradScaler(enabled=self.actual == "fp16")
 
     def _resolve_actual_precision(self) -> str:
         if self.requested in {"fp32", "float32"}:
