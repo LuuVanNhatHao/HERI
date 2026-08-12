@@ -55,3 +55,13 @@ def test_noisy_or_extreme_logits_have_finite_gradients() -> None:
     loss.backward()
     assert logits.grad is not None
     assert torch.isfinite(logits.grad).all()
+
+
+def test_noisy_or_bfloat16_logits_keep_probability_contract() -> None:
+    logits = torch.tensor([[-2.0, 0.0, 1.0, 3.0], [8.0, -8.0, 0.5, -0.5]], dtype=torch.bfloat16)
+    output = StableNoisyOR()(logits)
+    expected = noisy_or_from_probabilities(output.atomic_probabilities)
+
+    assert output.atomic_probabilities.dtype == torch.float32
+    assert output.binary_probability.dtype == torch.float32
+    assert torch.allclose(output.binary_probability, expected, atol=1e-5, rtol=1e-5)

@@ -78,7 +78,6 @@ class HERADecisionModule(nn.Module):
             graph_output.hypothesis_features,
             graph_output.hypothesis_mask,
         )
-        atomic_probabilities = torch.sigmoid(atomic_logits)
         noisy_or_output = self.noisy_or(atomic_logits)
         image_logits, image_probabilities, image_mask = self.image_grounding_head(
             hypothesis_features=graph_output.hypothesis_features,
@@ -90,7 +89,7 @@ class HERADecisionModule(nn.Module):
         )
         output = HERADecisionOutput(
             atomic_logits=atomic_logits,
-            atomic_probabilities=atomic_probabilities,
+            atomic_probabilities=noisy_or_output.atomic_probabilities,
             binary_probability=noisy_or_output.binary_probability,
             binary_logit=noisy_or_output.binary_logit,
             image_grounding_logits=image_logits,
