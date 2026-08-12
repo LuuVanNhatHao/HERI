@@ -40,6 +40,7 @@ class DINOv3Output:
     patch_mask: torch.Tensor
     global_feature: torch.Tensor
     patch_grid: PatchGrid
+    patch_special_token_count: int = 0
 
 
 @dataclass

@@ -9,6 +9,11 @@ server:
 
 validation:
   stop_on_failure: true
+  resume_completed_checks: true
+  resume_require_command_match: true
+  resume_require_config_hash_match: false
+  resume_require_git_commit_match: false
+  force_rerun_all: false
   phases:
     - name: phase1_data
       output_file: phase1.json

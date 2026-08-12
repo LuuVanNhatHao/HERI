@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -43,9 +44,17 @@ def main() -> int:
     started = time.perf_counter()
     phase_results: list[dict[str, Any]] = []
     phases = config["validation"]["phases"]
+    validation_settings = config["validation"]
+    git_commit = _current_git_commit()
     iterator = tqdm(phases, desc="Server validation phases", disable=not bool(config["progress"]["enabled"]))
     for phase in iterator:
-        phase_result = _run_phase(phase, output_root=output_root, progress=bool(config["progress"]["enabled"]))
+        phase_result = _run_phase(
+            phase,
+            output_root=output_root,
+            progress=bool(config["progress"]["enabled"]),
+            validation_settings=validation_settings,
+            git_commit=git_commit,
+        )
         phase_results.append(phase_result)
         (output_root / str(phase["output_file"])).write_text(
             json.dumps(phase_result, indent=2, default=str),
@@ -67,6 +76,11 @@ def main() -> int:
         "runtime_seconds": time.perf_counter() - started,
         "required_failures": required_failures,
         "phases": phase_results,
+        "resume": {
+            "resume_completed_checks": bool(validation_settings["resume_completed_checks"]),
+            "force_rerun_all": bool(validation_settings["force_rerun_all"]),
+            "git_commit": git_commit,
+        },
         "canonical_training_allowed": final_status == "PASS",
     }
     (output_root / "validation_summary.json").write_text(
@@ -77,7 +91,14 @@ def main() -> int:
     return 0 if final_status == "PASS" else 1
 
 
-def _run_phase(phase: Mapping[str, Any], *, output_root: Path, progress: bool) -> dict[str, Any]:
+def _run_phase(
+    phase: Mapping[str, Any],
+    *,
+    output_root: Path,
+    progress: bool,
+    validation_settings: Mapping[str, Any],
+    git_commit: str | None,
+) -> dict[str, Any]:
     checks = phase["checks"]
     results = []
     iterator = tqdm(
@@ -88,7 +109,14 @@ def _run_phase(phase: Mapping[str, Any], *, output_root: Path, progress: bool) -
     )
     for check in iterator:
         iterator.set_postfix(check=str(check["name"]))
-        results.append(_run_check(check, output_root=output_root))
+        results.append(
+            _run_check(
+                check,
+                output_root=output_root,
+                validation_settings=validation_settings,
+                git_commit=git_commit,
+            )
+        )
     required_failed = any(item["required_for_training"] and item["status"] != "PASS" for item in results)
     return {
         "phase": phase["name"],
@@ -97,15 +125,34 @@ def _run_phase(phase: Mapping[str, Any], *, output_root: Path, progress: bool) -
     }
 
 
-def _run_check(check: Mapping[str, Any], *, output_root: Path) -> dict[str, Any]:
+def _run_check(
+    check: Mapping[str, Any],
+    *,
+    output_root: Path,
+    validation_settings: Mapping[str, Any],
+    git_commit: str | None,
+) -> dict[str, Any]:
     command = [str(part) for part in check["command"]]
-    if command[0] == "python":
-        command[0] = sys.executable
     started = time.perf_counter()
     timeout = float(check.get("timeout_seconds", 0)) or None
-    log_name = str(check.get("log_file", f"{check['name']}.json")).replace("/", "_").replace("\\", "_")
+    log_name = _check_log_name(check)
     logs_dir = output_root / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
+    record_path = logs_dir / log_name
+    metadata = {
+        "git_commit": git_commit,
+        "command_config_sha256": _command_config_sha256(command),
+    }
+    reusable = _load_reusable_check_record(
+        check,
+        record_path=record_path,
+        validation_settings=validation_settings,
+        metadata=metadata,
+    )
+    if reusable is not None:
+        return reusable
+    if command[0] == "python":
+        command[0] = sys.executable
     stream_log_path = logs_dir / f"{Path(log_name).stem}.stream.log"
     tqdm.write(f"Running server validation check: {check['name']}")
     tqdm.write(f"Command: {' '.join(command)}")
@@ -156,14 +203,83 @@ def _run_check(check: Mapping[str, Any], *, output_root: Path) -> dict[str, Any]
         "status": "PASS" if returncode == 0 and not timed_out else "FAIL",
         "returncode": returncode,
         "timed_out": timed_out,
+        "skipped": False,
         "runtime_seconds": time.perf_counter() - started,
         "stdout_tail": "".join(stdout_tail),
         "stderr_tail": "".join(stderr_tail),
         "stream_log": str(stream_log_path),
+        **metadata,
         "expected_pass_criteria": check.get("expected_pass_criteria", []),
     }
-    (logs_dir / log_name).write_text(json.dumps(record, indent=2), encoding="utf-8")
+    record_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     return record
+
+
+def _check_log_name(check: Mapping[str, Any]) -> str:
+    return str(check.get("log_file", f"{check['name']}.json")).replace("/", "_").replace("\\", "_")
+
+
+def _load_reusable_check_record(
+    check: Mapping[str, Any],
+    *,
+    record_path: Path,
+    validation_settings: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if bool(validation_settings["force_rerun_all"]) or not bool(validation_settings["resume_completed_checks"]):
+        return None
+    if not record_path.exists():
+        return None
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if record.get("status") != "PASS":
+        return None
+    if bool(validation_settings["resume_require_command_match"]) and record.get("command") != check["command"]:
+        return None
+    if bool(validation_settings["resume_require_config_hash_match"]):
+        if record.get("command_config_sha256") != metadata["command_config_sha256"]:
+            return None
+    if bool(validation_settings["resume_require_git_commit_match"]):
+        if record.get("git_commit") != metadata["git_commit"]:
+            return None
+    reusable = dict(record)
+    reusable["skipped"] = True
+    reusable["resume_source"] = str(record_path)
+    tqdm.write(f"Skipping already passed server validation check: {check['name']}")
+    return reusable
+
+
+def _command_config_sha256(command: list[str]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for part in command:
+        if not part.endswith((".yaml", ".yml")):
+            continue
+        path = ROOT / part
+        if path.exists():
+            hashes[part] = _sha256_file(path)
+    return hashes
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _current_git_commit() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
 
 
 def _stream_pipe(

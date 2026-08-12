@@ -705,6 +705,12 @@ def validate_server_validation_config(config: Mapping[str, Any]) -> None:
         "server.expected_gpu_vram_gb",
         "server.expected_disk_gb",
         "server.cuda_environment",
+        "validation.stop_on_failure",
+        "validation.resume_completed_checks",
+        "validation.resume_require_command_match",
+        "validation.resume_require_config_hash_match",
+        "validation.resume_require_git_commit_match",
+        "validation.force_rerun_all",
         "validation.phases",
     ]
     for key in mandatory:

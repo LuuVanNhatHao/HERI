@@ -78,13 +78,7 @@ class DINOv3Encoder(nn.Module):
         if tokens.ndim != 3:
             raise ValueError(f"DINOv3 hidden states must be [B,N,C], got {tuple(tokens.shape)}")
 
-        patch_tokens = tokens
-        num_tokens = tokens.shape[1]
-        try:
-            grid_h, grid_w = infer_square_grid(num_tokens)
-        except ValueError:
-            grid_h, grid_w = infer_square_grid(num_tokens - 1)
-            patch_tokens = tokens[:, 1:, :]
+        patch_tokens, grid_h, grid_w, special_token_count = _validated_patch_tokens(tokens)
 
         patch_mask = torch.ones(
             patch_tokens.shape[:2],
@@ -104,6 +98,7 @@ class DINOv3Encoder(nn.Module):
                 image_height=int(image.shape[-2]),
                 image_width=int(image.shape[-1]),
             ),
+            patch_special_token_count=special_token_count,
         )
 
 
@@ -127,3 +122,24 @@ def _extract_optional_tensor(outputs: Any, name: str) -> torch.Tensor | None:
         if isinstance(value, torch.Tensor):
             return value
     return None
+
+
+def _validated_patch_tokens(tokens: torch.Tensor) -> tuple[torch.Tensor, int, int, int]:
+    """Strip prefix special/register tokens until DINO patches form a square grid."""
+
+    num_tokens = int(tokens.shape[1])
+    if num_tokens <= 0:
+        infer_square_grid(num_tokens)
+    max_prefix_special_tokens = min(num_tokens - 1, 16)
+    for special_token_count in range(max_prefix_special_tokens + 1):
+        patch_count = num_tokens - special_token_count
+        try:
+            grid_h, grid_w = infer_square_grid(patch_count)
+        except ValueError:
+            continue
+        return tokens[:, special_token_count:, :], grid_h, grid_w, special_token_count
+    raise ValueError(
+        "Cannot infer DINOv3 square patch grid from "
+        f"{num_tokens} tokens after stripping up to {max_prefix_special_tokens} "
+        "prefix special/register tokens"
+    )
