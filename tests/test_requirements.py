@@ -43,6 +43,12 @@ def test_transformers_major_version_is_bounded_before_five() -> None:
     assert "<5.0" in requirement
 
 
+def test_huggingface_hub_major_version_matches_transformers_four() -> None:
+    requirement = _requirement_line("huggingface-hub")
+    assert ">=0.34" in requirement
+    assert "<1.0" in requirement
+
+
 def test_transformers_major_five_fails_with_explicit_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transformers_compat, "_transformers_version", lambda: "5.15.0")
     with pytest.raises(TransformersCompatibilityError, match="unsupported transformers version"):
