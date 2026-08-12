@@ -1,0 +1,186 @@
+project:
+  name: HERA-DGM
+  seed: 42
+
+dataset:
+  name: DGM4
+  root: data/DGM4
+  train_annotations: data/DGM4/train.json
+  val_annotations: data/DGM4/val.json
+  test_annotations: data/DGM4/test.json
+  image_root: data/DGM4/images
+  verify_hashes: true
+  verify_image_exists: true
+
+dataset_hashes:
+  train: dafd4fe101d3de63b433759fae79b14b465294f7be73f26c9f3bb13b8de87704
+  val: d4377ecc19cb6528e36c77401482cbfffaa57977faee2c6124e3b1bdda045520
+  test: b58b29c4cf0f40cdf791189181ad57821f9359e358e93683cc702db3a41c0a18
+
+image:
+  size: 384
+  preserve_aspect_ratio: true
+  padding: true
+
+tokenizer:
+  enabled: true
+  name: microsoft/deberta-v3-large
+  use_fast: true
+  max_length: 64
+  local_files_only: false
+  ignore_index: -100
+
+backbones:
+  siglip2:
+    name: google/siglip2-so400m-patch14-384
+    revision:
+    local_files_only: false
+    trust_remote_code: false
+    image_mean: [0.5, 0.5, 0.5]
+    image_std: [0.5, 0.5, 0.5]
+    text_max_length: 64
+  dinov3:
+    name: facebook/dinov3-vitl16-pretrain-lvd1689m
+    revision:
+    local_files_only: false
+    trust_remote_code: false
+    image_mean: [0.485, 0.456, 0.406]
+    image_std: [0.229, 0.224, 0.225]
+  deberta:
+    name: microsoft/deberta-v3-large
+    revision:
+    local_files_only: false
+    trust_remote_code: false
+
+evidence:
+  hidden_dim: 512
+  activation: gelu
+  layer_norm: true
+  dropout: 0.1
+  input_dims:
+    visual_semantic:
+    visual_forensic:
+    face:
+    text_alignment:
+    text_context:
+  visual_semantic:
+    enabled: true
+    max_nodes: 64
+    budgeting: spatial_balanced
+  visual_forensic:
+    enabled: true
+    max_nodes: 64
+    budgeting: spatial_balanced
+  face:
+    enabled: true
+    truncate: false
+    max_nodes:
+    budgeting: ordered
+  text_alignment:
+    enabled: true
+    max_nodes: 32
+    budgeting: sequence_balanced
+  text_context:
+    enabled: true
+    max_nodes: 32
+    budgeting: sequence_balanced
+  cross_modal:
+    enabled: true
+    similarity: cosine
+
+graph:
+  type: hgt
+  hidden_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.1
+  hypothesis_init_std: 0.02
+  input_dims:
+    visual_semantic:
+    visual_forensic:
+    face:
+    text_alignment:
+    text_context:
+  reasoning:
+    cycles: 1
+    hypothesis_feedback: true
+  edges:
+    visual_semantic_visual_forensic:
+      method: spatial_knn
+      k: 4
+      bidirectional: true
+    visual_semantic_text_alignment:
+      method: similarity_topk
+      k: 4
+      bidirectional: true
+    text_alignment_text_context:
+      method: full_bipartite
+      bidirectional: true
+    semantic_to_hypotheses:
+      enabled: true
+    feedback:
+      enabled: true
+      semantic_feedback: false
+
+model:
+  hidden_dim: 512
+  hypotheses:
+    order: [FS, FA, TS, TA]
+  attribution:
+    hidden_dim: 512
+    dropout: 0.1
+  grounding:
+    image:
+      scoring: dot_product
+      dropout: 0.1
+    text:
+      scoring: dot_product
+      dropout: 0.1
+      full_token_store: true
+      token_input_dim: 1024
+  binary:
+    aggregation: noisy_or
+
+loss:
+  lambda_attr: 1.0
+  lambda_bin: 1.0
+  lambda_img: 1.0
+  lambda_txt: 1.0
+
+dataloader:
+  batch_size: 1
+  num_workers: 2
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  shuffle:
+    train: false
+    val: false
+    test: false
+  drop_last: false
+  seed: 42
+  id_aware_sampler:
+    enabled: false
+
+runtime:
+  device: cuda
+  precision: bf16
+  model_dtype: bf16
+  attn_implementation:
+
+smoke:
+  split: train
+  max_samples: 8
+  samples_per_class: 1
+  inspect_batches: 1
+  differentiability: true
+  projection_lr: 0.0001
+
+progress:
+  enabled: true
+
+logging:
+  level: INFO
+
+output:
+  root: outputs/phase5_smoke

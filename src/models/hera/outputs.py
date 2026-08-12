@@ -1,0 +1,106 @@
+"""Typed Phase-5 HERA decision output contract."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import torch
+
+from src.graph.schema import HYPOTHESIS_ORDER
+
+
+@dataclass
+class HERADecisionOutput:
+    """Attribution-first HERA decision and grounding outputs."""
+
+    atomic_logits: torch.Tensor
+    atomic_probabilities: torch.Tensor
+    binary_probability: torch.Tensor
+    binary_logit: torch.Tensor
+    image_grounding_logits: torch.Tensor
+    image_grounding_probabilities: torch.Tensor
+    image_grounding_mask: torch.Tensor
+    text_grounding_logits: torch.Tensor
+    text_grounding_probabilities: torch.Tensor
+    text_grounding_mask: torch.Tensor
+    hypothesis_features: torch.Tensor
+    face_source_indices: torch.Tensor | None = None
+    text_word_ids: torch.Tensor | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def validate(self) -> None:
+        """Validate Phase-5 tensor shapes, ranges, masks, and hypothesis order."""
+
+        if self.hypothesis_features.ndim != 3:
+            raise ValueError("hypothesis_features must be [B,4,D]")
+        batch, hypotheses, _ = self.hypothesis_features.shape
+        if hypotheses != len(HYPOTHESIS_ORDER):
+            raise ValueError("hypothesis_features must preserve [FS,FA,TS,TA] order")
+        if self.atomic_logits.shape != (batch, hypotheses):
+            raise ValueError("atomic_logits must be [B,4]")
+        if self.atomic_probabilities.shape != self.atomic_logits.shape:
+            raise ValueError("atomic_probabilities shape mismatch")
+        if self.binary_probability.shape != (batch,):
+            raise ValueError("binary_probability must be [B]")
+        if self.binary_logit.shape != (batch,):
+            raise ValueError("binary_logit must be [B]")
+        if self.image_grounding_logits.ndim != 3 or self.image_grounding_logits.shape[:2] != (batch, 2):
+            raise ValueError("image_grounding_logits must be [B,2,N_face]")
+        if self.image_grounding_probabilities.shape != self.image_grounding_logits.shape:
+            raise ValueError("image_grounding_probabilities shape mismatch")
+        if self.image_grounding_mask.shape != (batch, self.image_grounding_logits.shape[-1]):
+            raise ValueError("image_grounding_mask must be [B,N_face]")
+        if self.image_grounding_mask.dtype != torch.bool:
+            raise ValueError("image_grounding_mask must be bool")
+        if self.text_grounding_logits.ndim != 3 or self.text_grounding_logits.shape[:2] != (batch, 2):
+            raise ValueError("text_grounding_logits must be [B,2,N_full_text]")
+        if self.text_grounding_probabilities.shape != self.text_grounding_logits.shape:
+            raise ValueError("text_grounding_probabilities shape mismatch")
+        if self.text_grounding_mask.shape != (batch, self.text_grounding_logits.shape[-1]):
+            raise ValueError("text_grounding_mask must be [B,N_full_text]")
+        if self.text_grounding_mask.dtype != torch.bool:
+            raise ValueError("text_grounding_mask must be bool")
+        for name in (
+            "hypothesis_features",
+            "atomic_logits",
+            "atomic_probabilities",
+            "binary_probability",
+            "binary_logit",
+            "image_grounding_logits",
+            "image_grounding_probabilities",
+            "text_grounding_logits",
+            "text_grounding_probabilities",
+        ):
+            tensor = getattr(self, name)
+            if not torch.isfinite(tensor).all():
+                raise FloatingPointError(f"{name} contains non-finite values")
+        for name in ("atomic_probabilities", "binary_probability", "image_grounding_probabilities", "text_grounding_probabilities"):
+            tensor = getattr(self, name)
+            if bool(((tensor < -1e-6) | (tensor > 1.0 + 1e-6)).any()):
+                raise ValueError(f"{name} must be probabilities in [0,1]")
+        if self.face_source_indices is not None and self.face_source_indices.shape != self.image_grounding_mask.shape:
+            raise ValueError("face_source_indices must align with image_grounding_mask")
+        if self.text_word_ids is not None and self.text_word_ids.shape != self.text_grounding_mask.shape:
+            raise ValueError("text_word_ids must align with text_grounding_mask")
+
+
+@dataclass
+class HERADGMOutput(HERADecisionOutput):
+    """Full Phase-7 HERA-DGM output with compact integration metadata."""
+
+    evidence_metadata: dict[str, Any] = field(default_factory=dict)
+    routing_metadata: dict[str, Any] = field(default_factory=dict)
+    graph_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def validate(self) -> None:
+        """Validate the complete HERA output and Noisy-OR authenticity contract."""
+
+        super().validate()
+        expected_binary = 1.0 - torch.prod(1.0 - self.atomic_probabilities, dim=1)
+        if not torch.allclose(self.binary_probability, expected_binary, atol=1e-5, rtol=1e-5):
+            raise ValueError("binary_probability must be derived from atomic probabilities by StableNoisyOR")
+        if self.metadata.get("binary_shortcut") is not False:
+            raise ValueError("HERADGMOutput metadata must record binary_shortcut=False")
+        if self.metadata.get("binary_aggregation") != "noisy_or":
+            raise ValueError("HERADGMOutput metadata must record binary_aggregation='noisy_or'")

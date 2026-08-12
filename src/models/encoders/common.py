@@ -1,0 +1,114 @@
+"""Shared encoder utilities for Phase-2 pretrained wrappers."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable
+from typing import Any
+
+import torch
+from torch import nn
+
+
+def normalize_image_tensor(
+    image: torch.Tensor,
+    *,
+    mean: Iterable[float],
+    std: Iterable[float],
+) -> torch.Tensor:
+    """Apply model-specific channel normalization to Phase-1 [0,1] images."""
+
+    if image.ndim != 4 or image.shape[1] != 3:
+        raise ValueError(f"Expected image tensor [B,3,H,W], got {tuple(image.shape)}")
+    device = image.device
+    dtype = image.dtype
+    mean_tensor = torch.tensor(list(mean), device=device, dtype=dtype).view(1, 3, 1, 1)
+    std_tensor = torch.tensor(list(std), device=device, dtype=dtype).view(1, 3, 1, 1)
+    if torch.any(std_tensor <= 0):
+        raise ValueError("Normalization std values must be positive")
+    return (image - mean_tensor) / std_tensor
+
+
+def masked_mean(tokens: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+    """Mean-pool tokens while respecting a boolean mask."""
+
+    if mask is None:
+        return tokens.mean(dim=1)
+    mask_f = mask.to(tokens.dtype).unsqueeze(-1)
+    denom = mask_f.sum(dim=1).clamp_min(1.0)
+    return (tokens * mask_f).sum(dim=1) / denom
+
+
+def infer_square_grid(num_tokens: int) -> tuple[int, int]:
+    """Infer a square patch grid or fail clearly."""
+
+    if num_tokens <= 0:
+        raise ValueError(f"Cannot infer patch grid from non-positive token count: {num_tokens}")
+    side = int(math.sqrt(num_tokens))
+    if side * side != num_tokens:
+        raise ValueError(f"Cannot infer square patch grid from {num_tokens} patch tokens")
+    return side, side
+
+
+def freeze_module(module: nn.Module) -> None:
+    """Freeze every parameter in a module."""
+
+    for parameter in module.parameters():
+        parameter.requires_grad = False
+
+
+def unfreeze_module(module: nn.Module) -> None:
+    """Unfreeze every parameter in a module."""
+
+    for parameter in module.parameters():
+        parameter.requires_grad = True
+
+
+def _candidate_block_lists(module: nn.Module) -> list[nn.ModuleList | list[nn.Module]]:
+    candidates: list[nn.ModuleList | list[nn.Module]] = []
+    paths = (
+        "encoder.layer",
+        "encoder.layers",
+        "layers",
+        "blocks",
+        "vision_model.encoder.layers",
+        "text_model.encoder.layers",
+        "model.encoder.layers",
+    )
+    for dotted_path in paths:
+        current: Any = module
+        ok = True
+        for part in dotted_path.split("."):
+            if not hasattr(current, part):
+                ok = False
+                break
+            current = getattr(current, part)
+        if ok and isinstance(current, (nn.ModuleList, list)) and len(current) > 0:
+            candidates.append(current)
+    return candidates
+
+
+def unfreeze_last_blocks(module: nn.Module, count: int, *, stage_name: str) -> int:
+    """Unfreeze the final ``count`` blocks using wrapper-level introspection."""
+
+    if count <= 0:
+        return 0
+    block_lists = _candidate_block_lists(module)
+    if not block_lists:
+        raise ValueError(f"Cannot locate encoder blocks for partial unfreeze: {stage_name}")
+    unfrozen = 0
+    for blocks in block_lists:
+        for block in list(blocks)[-count:]:
+            unfreeze_module(block)
+            unfrozen += sum(parameter.numel() for parameter in block.parameters())
+    if unfrozen == 0:
+        raise ValueError(f"Requested partial unfreeze changed no parameters: {stage_name}")
+    return unfrozen
+
+
+def count_parameters(module: nn.Module) -> tuple[int, int]:
+    """Return total and trainable parameter counts."""
+
+    total = sum(parameter.numel() for parameter in module.parameters())
+    trainable = sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad)
+    return total, trainable

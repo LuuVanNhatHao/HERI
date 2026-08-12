@@ -1,0 +1,44 @@
+# HERA-DGM
+
+HERA-DGM is governed by the frozen Phase 0 Constitution in `docs/HERA_DGM_CONSTITUTION.md`.
+
+Phase 1 implements only DGM4 dataset infrastructure:
+
+- schema validation;
+- label mapping;
+- local image path resolution;
+- dataset preflight;
+- image resize/padding and bbox transforms;
+- `fake_text_pos` word-to-subword alignment utilities;
+- `DGM4Dataset`, collate, and DataLoader factory;
+- data tests and smoke inspection scripts.
+
+Canonical commands:
+
+```bash
+python scripts/prepare_data.py config/prepare_dgm4.yaml
+python scripts/inspect_batch.py config/prepare_dgm4.yaml
+```
+
+All runtime paths, parameters, and settings must come from YAML.
+
+Phase 2 adds controlled strong-backbone baselines only:
+
+- B0 global fusion baseline;
+- B1 cross-attention baseline;
+- real SigLIP2, DINOv3, and DeBERTa wrapper code;
+- shared losses, metrics, threshold tuning, training, checkpoint, and evaluation infrastructure.
+
+Canonical Phase-2 commands:
+
+```bash
+python scripts/model_smoke.py config/smoke_baseline_b0.yaml
+python scripts/model_smoke.py config/smoke_baseline_b1.yaml
+python scripts/train.py config/train_baseline_b0.yaml
+python scripts/train.py config/train_baseline_b1.yaml
+python scripts/evaluate.py config/evaluate_baseline_b0.yaml
+python scripts/evaluate.py config/evaluate_baseline_b1.yaml
+```
+
+Local resource-dependent checks are recorded in
+`outputs/phase2/deferred_server_validation.json`.

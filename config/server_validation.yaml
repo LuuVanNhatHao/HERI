@@ -1,0 +1,114 @@
+project:
+  name: HERA-DGM
+  seed: 42
+
+server:
+  expected_gpu_vram_gb: 48
+  expected_disk_gb: 200
+  cuda_environment: "13.0"
+
+validation:
+  stop_on_failure: true
+  phases:
+    - name: phase1_data
+      output_file: phase1.json
+      checks:
+        - name: phase1_prepare_full_decode_hashes
+          command: [python, scripts/prepare_data.py, config/prepare_dgm4_server_validation.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - Dataset hashes match the frozen Phase-0 SHA-256 contract.
+            - Full decode succeeds for all 206362 unique images when enabled.
+            - BBox, MTCNN, text-position, path, and split-count audits pass.
+        - name: phase1_dataloader_fast_tokenizer
+          command: [python, scripts/inspect_batch.py, config/prepare_dgm4_server_validation.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - microsoft/deberta-v3-large fast tokenizer loads.
+            - word_ids() alignment is available.
+            - Multiprocessing/pinned DataLoader batch contract validates.
+    - name: phase2_baselines
+      output_file: phase2.json
+      checks:
+        - name: phase2_b0_real_forward_backward
+          command: [python, scripts/model_smoke.py, config/smoke_baseline_b0.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - SigLIP2, DINOv3, and DeBERTa load through centralized compatibility.
+            - B0 forward, loss, backward, optimizer step, BF16, and VRAM reporting succeed.
+        - name: phase2_b1_real_forward_backward
+          command: [python, scripts/model_smoke.py, config/smoke_baseline_b1.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - B1 cross-attention streams and masks validate.
+            - Forward, loss, backward, optimizer step, BF16, and VRAM reporting succeed.
+    - name: phase3_evidence
+      output_file: phase3.json
+      checks:
+        - name: phase3_evidence_smoke
+          command: [python, scripts/evidence_smoke.py, config/smoke_evidence.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - All five evidence families are produced with finite projected features.
+            - DINO local patch features, MTCNN face pooling, and full text provenance validate.
+            - No target field is consumed by evidence extraction.
+    - name: phase4_graph
+      output_file: phase4.json
+      checks:
+        - name: phase4_hgt_smoke
+          command: [python, scripts/graph_smoke.py, config/smoke_graph.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - torch_geometric HGTConv imports and executes.
+            - Graph forward/backward smoke validates sample isolation and HGT tensor contracts.
+    - name: phase5_decision
+      output_file: phase5.json
+      checks:
+        - name: phase5_decision_smoke
+          command: [python, scripts/decision_smoke.py, config/smoke_decision.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - Attribution logits preserve [FS, FA, TS, TA].
+            - Noisy-OR binary probability matches the canonical formula.
+            - Image and full-text hypothesis-conditioned grounding execute.
+    - name: phase6_router
+      output_file: phase6.json
+      checks:
+        - name: phase6_routing_enabled_smoke
+          command: [python, scripts/routing_smoke.py, config/smoke_routing.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - Router executes before HGT and gradients reach reliability estimators.
+            - Routed graph evidence preserves masks, provenance, and full token store.
+        - name: phase6_routing_bypass_smoke
+          command: [python, scripts/routing_smoke.py, config/smoke_routing_bypass.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - routing.enabled=false path remains graph-compatible.
+            - Valid reliability scores are logically 1 and padded scores remain 0.
+    - name: phase7_full_hera
+      output_file: phase7.json
+      checks:
+        - name: phase7_hera_smoke
+          command: [python, scripts/hera_smoke.py, config/smoke_hera.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - Full HERADGM forward, loss, backward, optimizer step, and Noisy-OR audit pass.
+            - Router, HGT, grounding, and decision gradients are finite.
+            - No target leakage or independent binary shortcut is observed.
+        - name: phase7_short_training_smoke
+          command: [python, scripts/train.py, config/smoke_hera.yaml]
+          required_for_training: true
+          expected_pass_criteria:
+            - Training tqdm, validation tqdm, threshold tuning tqdm, and sklearn reports are visible.
+            - Best checkpoint, last checkpoint, history.csv, epoch metrics, router diagnostics, and bound thresholds are written.
+            - Stage A freeze and optimizer group accounting pass.
+
+progress:
+  enabled: true
+
+logging:
+  level: INFO
+
+output:
+  root: outputs/server_validation

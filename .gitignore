@@ -1,0 +1,66 @@
+# Local datasets and extracted assets
+/data/
+
+# Generated experiment artifacts
+/outputs/
+/logs/
+/runs/
+/checkpoints/
+/artifacts/
+/wandb/
+/mlruns/
+/tensorboard/
+
+# Keep the frozen HERA-DGM Constitution, ignore other local docs/notes
+/docs/*
+!/docs/HERA_DGM_CONSTITUTION.md
+
+# Python caches and test scratch
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.pytest_tmp/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments and package/build artifacts
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Local model/checkpoint/cache files
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+*.pkl
+*.pickle
+.cache/
+cache/
+hf_cache/
+.huggingface/
+
+# Local secrets and machine-specific settings
+.env
+.env.*
+!.env.example
+.agents/
+.codex/
+.vscode/
+.idea/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
