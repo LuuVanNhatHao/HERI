@@ -278,9 +278,16 @@ runtime:
   fail_on_nan: true
 
 evaluation:
-  checkpoint_path: outputs/phase7/<run_id>/checkpoints/best.pt
-  thresholds_path: outputs/phase7/<run_id>/thresholds/best_thresholds.json
+  checkpoint_path:
+  thresholds_path:
   split: test
+  checkpoint_resolution:
+    enabled: true
+    mode: latest
+    output_root: outputs/phase7
+    run_dir:
+    checkpoint_name: best.pt
+    thresholds_name: best_thresholds.json
 
 progress:
   enabled: true

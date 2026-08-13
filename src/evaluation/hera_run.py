@@ -23,6 +23,90 @@ from src.utils.config import dump_yaml
 from src.utils.environment import collect_environment_metadata
 
 
+_MISSING_PATH_MARKERS = ("<run_id>", "RUN")
+
+
+def resolve_hera_evaluation_artifacts(config: Mapping[str, Any]) -> tuple[Path, Path]:
+    """Resolve the checkpoint and validation-threshold artifacts for HERA evaluation."""
+
+    evaluation = config["evaluation"]
+    checkpoint_path = evaluation.get("checkpoint_path")
+    thresholds_path = evaluation.get("thresholds_path")
+    if _is_explicit_artifact_path(checkpoint_path) and _is_explicit_artifact_path(thresholds_path):
+        return Path(str(checkpoint_path)), Path(str(thresholds_path))
+
+    resolution = evaluation.get("checkpoint_resolution")
+    if not isinstance(resolution, Mapping) or not bool(resolution.get("enabled", False)):
+        raise FileNotFoundError(
+            "HERA evaluation checkpoint_path/thresholds_path are not explicit. "
+            "Set both paths in YAML, or enable evaluation.checkpoint_resolution."
+        )
+
+    mode = str(resolution["mode"])
+    checkpoint_name = str(resolution["checkpoint_name"])
+    thresholds_name = str(resolution["thresholds_name"])
+    if mode == "run_dir":
+        run_dir_value = resolution.get("run_dir")
+        if run_dir_value in (None, ""):
+            raise ValueError("evaluation.checkpoint_resolution.run_dir is required when mode=run_dir")
+        candidates = [_artifact_pair_from_run_dir(Path(str(run_dir_value)), checkpoint_name, thresholds_name)]
+    elif mode == "latest":
+        output_root = Path(str(resolution["output_root"]))
+        candidates = _latest_artifact_candidates(output_root, checkpoint_name, thresholds_name)
+    else:
+        raise ValueError("evaluation.checkpoint_resolution.mode must be latest or run_dir")
+
+    existing = [
+        (checkpoint, thresholds)
+        for checkpoint, thresholds in candidates
+        if checkpoint.is_file() and thresholds.is_file()
+    ]
+    if not existing:
+        raise FileNotFoundError(
+            "No complete HERA evaluation artifact pair found. Expected each selected run to contain "
+            f"checkpoints/{checkpoint_name} and thresholds/{thresholds_name}."
+        )
+    return existing[0]
+
+
+def _is_explicit_artifact_path(value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    text = str(value)
+    return not any(marker in text for marker in _MISSING_PATH_MARKERS)
+
+
+def _artifact_pair_from_run_dir(
+    run_dir: Path,
+    checkpoint_name: str,
+    thresholds_name: str,
+) -> tuple[Path, Path]:
+    return run_dir / "checkpoints" / checkpoint_name, run_dir / "thresholds" / thresholds_name
+
+
+def _latest_artifact_candidates(
+    output_root: Path,
+    checkpoint_name: str,
+    thresholds_name: str,
+) -> list[tuple[Path, Path]]:
+    if not output_root.exists():
+        return []
+    pairs = [
+        _artifact_pair_from_run_dir(run_dir, checkpoint_name, thresholds_name)
+        for run_dir in output_root.iterdir()
+        if run_dir.is_dir()
+    ]
+    return sorted(
+        pairs,
+        key=lambda pair: (
+            pair[0].stat().st_mtime if pair[0].exists() else float("-inf"),
+            pair[1].stat().st_mtime if pair[1].exists() else float("-inf"),
+            pair[0].as_posix(),
+        ),
+        reverse=True,
+    )
+
+
 def evaluate_hera(config: Mapping[str, Any]) -> Path:
     """Run final HERA test evaluation using validation-bound thresholds."""
 
@@ -49,8 +133,9 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         samples_per_class=config.get("smoke", {}).get("samples_per_class"),
     )
     precision = PrecisionManager(precision=str(config["runtime"]["precision"]), device=device)
-    checkpoint_path = Path(str(config["evaluation"]["checkpoint_path"]))
-    thresholds_path = Path(str(config["evaluation"]["thresholds_path"]))
+    checkpoint_path, thresholds_path = resolve_hera_evaluation_artifacts(config)
+    tqdm.write(f"Resolved evaluation checkpoint: {checkpoint_path}")
+    tqdm.write(f"Resolved validation thresholds: {thresholds_path}")
     load_checkpoint(path=checkpoint_path, model=model, restore_rng=False)
     ensure_no_uninitialized_parameters(model, context="HERA evaluation checkpoint load")
     thresholds = _load_thresholds(thresholds_path, checkpoint_path=checkpoint_path)

@@ -653,6 +653,12 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
                 "evaluation.checkpoint_path",
                 "evaluation.thresholds_path",
                 "evaluation.split",
+                "evaluation.checkpoint_resolution.enabled",
+                "evaluation.checkpoint_resolution.mode",
+                "evaluation.checkpoint_resolution.output_root",
+                "evaluation.checkpoint_resolution.run_dir",
+                "evaluation.checkpoint_resolution.checkpoint_name",
+                "evaluation.checkpoint_resolution.thresholds_name",
             ]
         )
     elif mode == "smoke":
@@ -716,6 +722,33 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
     high = float(require_key(config, "routing.diagnostics.high_threshold"))
     if low < 0 or high > 1 or low >= high:
         raise ConfigError("routing diagnostics thresholds must satisfy 0 <= low < high <= 1")
+    if mode == "evaluate":
+        resolution = require_key(config, "evaluation.checkpoint_resolution")
+        resolution_enabled = bool(require_key(config, "evaluation.checkpoint_resolution.enabled"))
+        checkpoint_path = require_key(config, "evaluation.checkpoint_path")
+        thresholds_path = require_key(config, "evaluation.thresholds_path")
+        explicit_checkpoint = _is_explicit_evaluation_path(checkpoint_path)
+        explicit_thresholds = _is_explicit_evaluation_path(thresholds_path)
+        if explicit_checkpoint != explicit_thresholds:
+            raise ConfigError("evaluation.checkpoint_path and evaluation.thresholds_path must both be explicit or both be resolved")
+        if not explicit_checkpoint and not resolution_enabled:
+            raise ConfigError(
+                "evaluation checkpoint paths are missing or contain placeholders; enable evaluation.checkpoint_resolution"
+            )
+        resolution_mode = str(require_key(config, "evaluation.checkpoint_resolution.mode"))
+        if resolution_mode not in {"latest", "run_dir"}:
+            raise ConfigError("evaluation.checkpoint_resolution.mode must be latest or run_dir")
+        if resolution_mode == "run_dir" and require_key(config, "evaluation.checkpoint_resolution.run_dir") in (None, ""):
+            raise ConfigError("evaluation.checkpoint_resolution.run_dir is required when mode=run_dir")
+        for key in (
+            "evaluation.checkpoint_resolution.output_root",
+            "evaluation.checkpoint_resolution.checkpoint_name",
+            "evaluation.checkpoint_resolution.thresholds_name",
+        ):
+            if require_key(config, key) in (None, ""):
+                raise ConfigError(f"{key} must be non-empty")
+        if not isinstance(resolution, Mapping):
+            raise ConfigError("evaluation.checkpoint_resolution must be a mapping")
 
 
 def validate_server_validation_config(config: Mapping[str, Any]) -> None:
@@ -784,6 +817,13 @@ def _validate_common_canonical_data_and_backbones(config: Mapping[str, Any], *, 
             raise ConfigError(f"{key} must be canonical value: {expected}")
     if bool(require_key(config, "tokenizer.enabled")) and not bool(require_key(config, "tokenizer.use_fast")):
         raise ConfigError("tokenizer.use_fast must be true when tokenizer.enabled is true")
+
+
+def _is_explicit_evaluation_path(value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    text = str(value)
+    return "<run_id>" not in text and "RUN" not in text
 
 
 def dump_yaml(data: Mapping[str, Any], path: str | Path) -> None:

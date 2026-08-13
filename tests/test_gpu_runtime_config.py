@@ -43,6 +43,12 @@ def _without_resume_horizon_policy(path: str) -> dict:
     return config
 
 
+def _without_evaluation_checkpoint_resolution(path: str) -> dict:
+    config = copy.deepcopy(load_yaml_config(path))
+    config["evaluation"].pop("checkpoint_resolution")
+    return config
+
+
 def test_baseline_runtime_model_dtype_is_mandatory() -> None:
     with pytest.raises(ConfigError, match="runtime.model_dtype"):
         validate_baseline_config(_without_model_dtype("config/train_baseline_b0.yaml"), mode="train")
@@ -76,3 +82,8 @@ def test_hera_early_stopping_config_is_mandatory() -> None:
 def test_hera_resume_horizon_policy_is_mandatory() -> None:
     with pytest.raises(ConfigError, match="scheduler.resume_horizon_policy"):
         validate_hera_config(_without_resume_horizon_policy("config/train_hera.yaml"), mode="train")
+
+
+def test_hera_evaluation_checkpoint_resolution_is_mandatory() -> None:
+    with pytest.raises(ConfigError, match="evaluation.checkpoint_resolution.enabled"):
+        validate_hera_config(_without_evaluation_checkpoint_resolution("config/evaluate_hera.yaml"), mode="evaluate")
