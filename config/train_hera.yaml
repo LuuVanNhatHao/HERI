@@ -180,7 +180,7 @@ loss:
   lambda_ev: 0.0
 
 training:
-  epochs: 5
+  epochs: 10
   micro_batch_size: 32
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
