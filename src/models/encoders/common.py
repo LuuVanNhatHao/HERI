@@ -10,6 +10,10 @@ import torch
 from torch import nn
 
 
+_BLOCK_PATH_TERMS = ("layer", "layers", "block", "blocks", "layer_chunks", "block_chunks")
+_BLOCK_CLASS_TERMS = ("Layer", "Block", "Encoder")
+
+
 def normalize_image_tensor(
     image: torch.Tensor,
     *,
@@ -64,16 +68,66 @@ def unfreeze_module(module: nn.Module) -> None:
         parameter.requires_grad = True
 
 
-def _candidate_block_lists(module: nn.Module) -> list[nn.ModuleList | list[nn.Module]]:
-    candidates: list[nn.ModuleList | list[nn.Module]] = []
+def _module_sequence_has_parameters(blocks: list[nn.Module]) -> bool:
+    return any(parameter.numel() > 0 for block in blocks for parameter in block.parameters())
+
+
+def _flatten_module_sequence(sequence: nn.ModuleList | list[nn.Module]) -> list[nn.Module]:
+    blocks: list[nn.Module] = []
+    for item in sequence:
+        if isinstance(item, nn.ModuleList):
+            blocks.extend(_flatten_module_sequence(item))
+        elif isinstance(item, list) and all(isinstance(child, nn.Module) for child in item):
+            blocks.extend(_flatten_module_sequence(item))
+        elif isinstance(item, nn.Module):
+            blocks.append(item)
+    return blocks
+
+
+def _looks_like_transformer_blocks(path: str, blocks: list[nn.Module]) -> bool:
+    if not blocks or not _module_sequence_has_parameters(blocks):
+        return False
+    normalized = path.lower()
+    if any(term in normalized for term in _BLOCK_PATH_TERMS):
+        return True
+    return any(any(term in block.__class__.__name__ for term in _BLOCK_CLASS_TERMS) for block in blocks)
+
+
+def _deduplicate_block_lists(candidates: list[list[nn.Module]]) -> list[list[nn.Module]]:
+    deduplicated: list[list[nn.Module]] = []
+    seen: set[tuple[int, ...]] = set()
+    for blocks in candidates:
+        key = tuple(id(block) for block in blocks)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(blocks)
+    return deduplicated
+
+
+def _candidate_block_lists(module: nn.Module) -> list[list[nn.Module]]:
+    candidates: list[list[nn.Module]] = []
     paths = (
         "encoder.layer",
         "encoder.layers",
+        "encoder.layer_chunks",
+        "encoder.block_chunks",
+        "layer",
         "layers",
         "blocks",
+        "block_chunks",
         "vision_model.encoder.layers",
+        "vision_model.encoder.layer",
+        "vision_model.encoder.layer_chunks",
         "text_model.encoder.layers",
+        "text_model.encoder.layer",
+        "text_model.encoder.layer_chunks",
         "model.encoder.layers",
+        "model.encoder.layer",
+        "model.encoder.layer_chunks",
+        "backbone.encoder.layers",
+        "backbone.encoder.layer",
+        "backbone.encoder.layer_chunks",
     )
     for dotted_path in paths:
         current: Any = module
@@ -84,8 +138,34 @@ def _candidate_block_lists(module: nn.Module) -> list[nn.ModuleList | list[nn.Mo
                 break
             current = getattr(current, part)
         if ok and isinstance(current, (nn.ModuleList, list)) and len(current) > 0:
-            candidates.append(current)
-    return candidates
+            blocks = _flatten_module_sequence(current)
+            if _looks_like_transformer_blocks(dotted_path, blocks):
+                candidates.append(blocks)
+    if candidates:
+        return _deduplicate_block_lists(candidates)
+
+    recursive: list[tuple[int, int, str, list[nn.Module]]] = []
+    for path, child in module.named_modules():
+        if not isinstance(child, nn.ModuleList) or len(child) == 0:
+            continue
+        blocks = _flatten_module_sequence(child)
+        if not _looks_like_transformer_blocks(path, blocks):
+            continue
+        score = 0
+        normalized = path.lower()
+        if any(term in normalized for term in _BLOCK_PATH_TERMS):
+            score += 10
+        if "encoder" in normalized:
+            score += 5
+        if path.endswith(("layers", "layer", "blocks", "layer_chunks", "block_chunks")):
+            score += 5
+        recursive.append((score, len(blocks), path, blocks))
+    if not recursive:
+        return []
+    recursive.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    best_score, best_len = recursive[0][0], recursive[0][1]
+    best = [blocks for score, length, _, blocks in recursive if score == best_score and length == best_len]
+    return _deduplicate_block_lists(best)
 
 
 def unfreeze_last_blocks(module: nn.Module, count: int, *, stage_name: str) -> int:
@@ -98,7 +178,7 @@ def unfreeze_last_blocks(module: nn.Module, count: int, *, stage_name: str) -> i
         raise ValueError(f"Cannot locate encoder blocks for partial unfreeze: {stage_name}")
     unfrozen = 0
     for blocks in block_lists:
-        for block in list(blocks)[-count:]:
+        for block in blocks[-count:]:
             unfreeze_module(block)
             unfrozen += sum(parameter.numel() for parameter in block.parameters())
     if unfrozen == 0:

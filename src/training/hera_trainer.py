@@ -32,8 +32,14 @@ from src.utils.environment import collect_environment_metadata
 BYTES_PER_GIB = 1024**3
 
 
-def create_hera_run_dir(config: Mapping[str, Any]) -> Path:
+def create_hera_run_dir(config: Mapping[str, Any], *, resume_checkpoint: Path | None = None) -> Path:
     """Create a unique HERA run directory with canonical subdirectories."""
+
+    if resume_checkpoint is not None and resume_checkpoint.parent.name == "checkpoints":
+        run_dir = resume_checkpoint.parent.parent
+        for subdir in ("checkpoints", "metrics", "logs", "thresholds", "predictions", "router"):
+            (run_dir / subdir).mkdir(parents=True, exist_ok=True)
+        return run_dir
 
     output_root = Path(str(config["output"]["root"]))
     seed = int(config["project"]["seed"])
@@ -43,6 +49,46 @@ def create_hera_run_dir(config: Mapping[str, Any]) -> Path:
     for subdir in ("checkpoints", "metrics", "logs", "thresholds", "predictions", "router"):
         (run_dir / subdir).mkdir(parents=True, exist_ok=False)
     return run_dir
+
+
+def _resolve_hera_resume_checkpoint(config: Mapping[str, Any]) -> Path | None:
+    """Resolve explicit or YAML-enabled auto-resume checkpoint paths."""
+
+    explicit = config["training"].get("resume_from")
+    if explicit not in (None, ""):
+        path = Path(str(explicit))
+        if not path.exists():
+            raise FileNotFoundError(f"Configured training.resume_from checkpoint does not exist: {path}")
+        return path
+
+    auto_resume = config["training"]["auto_resume"]
+    if not bool(auto_resume["enabled"]):
+        return None
+    checkpoint_name = str(auto_resume["checkpoint_name"])
+    run_dir = auto_resume.get("run_dir")
+    if run_dir not in (None, ""):
+        path = Path(str(run_dir)) / "checkpoints" / checkpoint_name
+        if not path.exists():
+            raise FileNotFoundError(f"Configured training.auto_resume.run_dir has no checkpoint: {path}")
+        return path
+    return _latest_hera_resume_checkpoint(Path(str(config["output"]["root"])), checkpoint_name=checkpoint_name)
+
+
+def _latest_hera_resume_checkpoint(output_root: Path, *, checkpoint_name: str) -> Path | None:
+    if not output_root.exists():
+        return None
+    candidates = [
+        checkpoint
+        for checkpoint in output_root.glob(f"*/checkpoints/{checkpoint_name}")
+        if checkpoint.is_file()
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda path: (path.stat().st_mtime, path.as_posix()),
+        reverse=True,
+    )[0]
 
 
 def _cuda_device_index(device: torch.device) -> int | None:
@@ -88,7 +134,8 @@ class HERATrainer:
         self.device = torch.device(str(config["runtime"]["device"]))
         self.progress = bool(config["progress"]["enabled"])
         self.cuda_memory_logging = bool(config["runtime"]["cuda_memory_logging"]["enabled"])
-        self.run_dir = create_hera_run_dir(config)
+        self.resume_checkpoint_path = _resolve_hera_resume_checkpoint(config)
+        self.run_dir = create_hera_run_dir(config, resume_checkpoint=self.resume_checkpoint_path)
         dump_yaml(config, self.run_dir / "effective_config.yaml")
         environment = collect_environment_metadata(Path.cwd())
         environment["backbones"] = config["backbones"]
@@ -99,6 +146,8 @@ class HERATrainer:
         self.model = HERADGM.from_config(config, load_backbones=True).to(self.device)
         self.gradient_checkpointing = apply_configured_gradient_checkpointing(self.model, config)
         self._log_cuda_runtime_state("after model load")
+        if self.resume_checkpoint_path is not None:
+            tqdm.write(f"Resume checkpoint selected: {self.resume_checkpoint_path}")
         self.loss_fn = HERAMultitaskLoss(config["loss"])
         self.precision = PrecisionManager(
             precision=str(config["runtime"]["precision"]),
@@ -142,11 +191,11 @@ class HERATrainer:
 
         optimizer: torch.optim.Optimizer | None = None
         scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
-        resume_path = self.config["training"].get("resume_from")
+        resume_path = self.resume_checkpoint_path
         start_epoch = 1
         resume_checkpoint_epoch: int | None = None
         if resume_path:
-            resume_payload = torch.load(Path(str(resume_path)), map_location="cpu", weights_only=False)
+            resume_payload = torch.load(resume_path, map_location="cpu", weights_only=False)
             resume_checkpoint_epoch = int(resume_payload["epoch"])
             start_epoch = resume_checkpoint_epoch + 1
             if start_epoch > total_epochs:
@@ -171,7 +220,7 @@ class HERATrainer:
                     epoch,
                 )
                 checkpoint = load_checkpoint(
-                    path=Path(str(resume_path)),
+                    path=resume_path,
                     model=self.model,
                     optimizer=None if crosses_stage_boundary else optimizer,
                     scheduler=None if crosses_stage_boundary else scheduler,
@@ -404,6 +453,7 @@ class HERATrainer:
                 config=self.config,
                 precision=self.precision.actual,
             )
+            tqdm.write(f"Saved last checkpoint: {last_path}")
         epoch_threshold_path = self.run_dir / "thresholds" / f"epoch_{self.state.epoch:03d}_thresholds.json"
         epoch_threshold_path.write_text(
             json.dumps(
@@ -431,6 +481,7 @@ class HERATrainer:
                 config=self.config,
                 precision=self.precision.actual,
             )
+            tqdm.write(f"Saved ranked checkpoint: {ranked_path}")
             self._ranked_checkpoints.append((score_tuple, ranked_path))
             self._ranked_checkpoints.sort(key=lambda item: item[0], reverse=True)
             for _, stale_path in self._ranked_checkpoints[top_k:]:
@@ -453,6 +504,7 @@ class HERATrainer:
                 config=self.config,
                 precision=self.precision.actual,
             )
+            tqdm.write(f"Saved best checkpoint: {best_path}")
             (self.run_dir / "thresholds" / "best_thresholds.json").write_text(
                 json.dumps(
                     {

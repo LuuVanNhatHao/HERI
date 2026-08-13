@@ -24,6 +24,25 @@ class DummyDINOModel(torch.nn.Module):
         return DummyDINOOutput(last_hidden_state=self.tokens[:batch].to(pixel_values.device))
 
 
+class ChunkedDINOModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.encoder = torch.nn.Module()
+        self.blocks = [
+            torch.nn.Linear(2, 2),
+            torch.nn.Linear(2, 2),
+            torch.nn.Linear(2, 2),
+            torch.nn.Linear(2, 2),
+            torch.nn.Linear(2, 2),
+        ]
+        self.encoder.layer_chunks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleList(self.blocks[:2]),
+                torch.nn.ModuleList(self.blocks[2:]),
+            ]
+        )
+
+
 def test_dinov3_strips_prefix_register_tokens_for_square_patch_grid() -> None:
     tokens = torch.arange(581 * 4, dtype=torch.float32).reshape(1, 581, 4)
     encoder = DINOv3Encoder(
@@ -54,3 +73,20 @@ def test_dinov3_patch_grid_failure_names_token_count() -> None:
 
     with pytest.raises(ValueError, match="600 tokens"):
         encoder(image=torch.zeros(1, 3, 384, 384))
+
+
+def test_dinov3_partial_unfreeze_supports_chunked_encoder_blocks() -> None:
+    model = ChunkedDINOModel()
+    encoder = DINOv3Encoder(
+        model=model,
+        image_mean=(0.0, 0.0, 0.0),
+        image_std=(1.0, 1.0, 1.0),
+        model_name="dummy-dinov3-chunked",
+    )
+    encoder.freeze_all()
+
+    changed = encoder.unfreeze_last_blocks(2)
+
+    assert changed == sum(parameter.numel() for block in model.blocks[-2:] for parameter in block.parameters())
+    assert all(not parameter.requires_grad for block in model.blocks[:-2] for parameter in block.parameters())
+    assert all(parameter.requires_grad for block in model.blocks[-2:] for parameter in block.parameters())

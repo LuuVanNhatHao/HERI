@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import os
+from pathlib import Path
 
 import pytest
 import torch
@@ -12,6 +14,7 @@ from src.training.hera_trainer import (
     _cuda_memory_postfix,
     _cuda_memory_summary,
     _ensure_finite_losses,
+    _resolve_hera_resume_checkpoint,
     apply_configured_gradient_checkpointing,
 )
 from src.training.optimizer import apply_training_stage, create_optimizer, parameter_accounting
@@ -114,3 +117,42 @@ def test_hera_nan_guard_fails_with_context() -> None:
 def test_cuda_memory_helpers_are_inactive_for_cpu_device() -> None:
     assert _cuda_memory_summary(torch.device("cpu")) is None
     assert _cuda_memory_postfix(torch.device("cpu")) is None
+
+
+def test_hera_auto_resume_selects_latest_last_checkpoint(tmp_path: Path) -> None:
+    older = tmp_path / "hera_seed42_old" / "checkpoints" / "last.pt"
+    newer = tmp_path / "hera_seed42_new" / "checkpoints" / "last.pt"
+    older.parent.mkdir(parents=True)
+    newer.parent.mkdir(parents=True)
+    older.write_bytes(b"old")
+    newer.write_bytes(b"new")
+    os.utime(older, (100, 100))
+    os.utime(newer, (200, 200))
+    cfg = hera_test_config()
+    cfg["output"] = {"root": str(tmp_path)}
+    cfg["training"]["resume_from"] = None
+    cfg["training"]["auto_resume"] = {
+        "enabled": True,
+        "run_dir": None,
+        "checkpoint_name": "last.pt",
+    }
+
+    assert _resolve_hera_resume_checkpoint(cfg) == newer
+
+
+def test_hera_explicit_resume_overrides_auto_resume(tmp_path: Path) -> None:
+    explicit = tmp_path / "manual.pt"
+    automatic = tmp_path / "hera_seed42_new" / "checkpoints" / "last.pt"
+    automatic.parent.mkdir(parents=True)
+    explicit.write_bytes(b"manual")
+    automatic.write_bytes(b"auto")
+    cfg = hera_test_config()
+    cfg["output"] = {"root": str(tmp_path)}
+    cfg["training"]["resume_from"] = str(explicit)
+    cfg["training"]["auto_resume"] = {
+        "enabled": True,
+        "run_dir": None,
+        "checkpoint_name": "last.pt",
+    }
+
+    assert _resolve_hera_resume_checkpoint(cfg) == explicit
