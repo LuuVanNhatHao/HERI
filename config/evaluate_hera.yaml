@@ -190,6 +190,12 @@ training:
     enabled: false
     run_dir:
     checkpoint_name: last.pt
+  early_stopping:
+    enabled: false
+    metric: cf1
+    mode: max
+    patience: 3
+    min_delta: 0.0
   stages:
     stage_a_freeze_epochs: 3
     stage_b_unfreeze_last_blocks:

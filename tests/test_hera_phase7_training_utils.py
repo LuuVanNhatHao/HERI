@@ -13,6 +13,7 @@ from src.models.hera import HERADGM
 from src.training.hera_trainer import (
     _cuda_memory_postfix,
     _cuda_memory_summary,
+    _early_stopping_improved,
     _ensure_finite_losses,
     _resolve_hera_resume_checkpoint,
     apply_configured_gradient_checkpointing,
@@ -156,3 +157,16 @@ def test_hera_explicit_resume_overrides_auto_resume(tmp_path: Path) -> None:
     }
 
     assert _resolve_hera_resume_checkpoint(cfg) == explicit
+
+
+def test_hera_early_stopping_improvement_respects_mode_and_delta() -> None:
+    assert _early_stopping_improved(current=0.8, best=None, mode="max", min_delta=0.0)
+    assert _early_stopping_improved(current=0.81, best=0.8, mode="max", min_delta=0.005)
+    assert not _early_stopping_improved(current=0.804, best=0.8, mode="max", min_delta=0.005)
+    assert _early_stopping_improved(current=0.79, best=0.8, mode="min", min_delta=0.005)
+    assert not _early_stopping_improved(current=0.798, best=0.8, mode="min", min_delta=0.005)
+
+
+def test_hera_early_stopping_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="Unsupported early stopping mode"):
+        _early_stopping_improved(current=0.8, best=0.7, mode="sideways", min_delta=0.0)

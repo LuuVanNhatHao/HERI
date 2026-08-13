@@ -264,6 +264,7 @@ class HERATrainer:
             tqdm.write("Validation attribution classification_report:")
             tqdm.write(reports["attribution_report"])
             tqdm.write(f"Validation thresholds: {thresholds.as_dict()}")
+            early_stop = self._update_early_stopping(reports["metrics"])
             epoch_metrics = {
                 "epoch": epoch,
                 "stage": _stage_name(self.config, epoch),
@@ -277,6 +278,7 @@ class HERATrainer:
                 "precision": self.precision.actual,
                 "effective_batch_size": _effective_batch_size(self.config),
                 "peak_vram": torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None,
+                "early_stopping": _early_stopping_status(self.config, self.state, reports["metrics"]),
             }
             self._persist_epoch_metrics(epoch_metrics)
             (self.run_dir / "router" / f"epoch_{epoch:03d}.json").write_text(
@@ -289,6 +291,15 @@ class HERATrainer:
                 metrics=reports["metrics"],
                 epoch_metrics=epoch_metrics,
             )
+            if early_stop:
+                tqdm.write(
+                    "Early stopping triggered: "
+                    f"epoch={epoch}, "
+                    f"metric={self.config['training']['early_stopping']['metric']}, "
+                    f"bad_epochs={self.state.early_stopping_bad_epochs}, "
+                    f"patience={self.config['training']['early_stopping']['patience']}"
+                )
+                break
         if self.state.best_checkpoint is None:
             raise RuntimeError("HERA training finished without producing a best checkpoint")
         return self.state.best_checkpoint
@@ -420,6 +431,9 @@ class HERATrainer:
             "val_image_mean_iou": epoch_metrics["val"].get("image_mean_iou"),
             "effective_batch_size": epoch_metrics["effective_batch_size"],
             "peak_vram": epoch_metrics["peak_vram"],
+            "early_stopping_metric": epoch_metrics["early_stopping"]["metric"],
+            "early_stopping_best": epoch_metrics["early_stopping"]["best"],
+            "early_stopping_bad_epochs": epoch_metrics["early_stopping"]["bad_epochs"],
             **epoch_metrics["thresholds"],
         }
         exists = self.history_path.exists()
@@ -532,6 +546,9 @@ class HERATrainer:
             self.state.thresholds = _thresholds_from_mapping(threshold_data)
         if self.state.best_metric is not None:
             self._best_score_tuple = (float(self.state.best_metric),)
+        early_best = checkpoint.get("early_stopping_best_metric", self.state.best_metric)
+        self.state.early_stopping_best_metric = float(early_best) if early_best is not None else None
+        self.state.early_stopping_bad_epochs = int(checkpoint.get("early_stopping_bad_epochs", 0))
 
     def _log_cuda_runtime_state(self, label: str) -> None:
         if not self.cuda_memory_logging:
@@ -555,6 +572,36 @@ class HERATrainer:
             f"max_allocated={summary['max_allocated_gb']:.2f}GB, "
             f"total={summary['total_gb']:.2f}GB"
         )
+
+    def _update_early_stopping(self, metrics: Mapping[str, Any]) -> bool:
+        settings = self.config["training"]["early_stopping"]
+        if not bool(settings["enabled"]):
+            return False
+        metric = str(settings["metric"])
+        value = metrics.get(metric)
+        if value is None:
+            raise ValueError(f"Early stopping metric {metric!r} is missing from validation metrics")
+        current = float(value)
+        improved = _early_stopping_improved(
+            current=current,
+            best=self.state.early_stopping_best_metric,
+            mode=str(settings["mode"]),
+            min_delta=float(settings["min_delta"]),
+        )
+        if improved:
+            self.state.early_stopping_best_metric = current
+            self.state.early_stopping_bad_epochs = 0
+        else:
+            self.state.early_stopping_bad_epochs += 1
+        patience = int(settings["patience"])
+        tqdm.write(
+            "Early stopping monitor: "
+            f"metric={metric}, value={current:.6f}, "
+            f"best={self.state.early_stopping_best_metric:.6f}, "
+            f"bad_epochs={self.state.early_stopping_bad_epochs}/{patience}, "
+            f"mode={settings['mode']}, min_delta={float(settings['min_delta']):.6f}"
+        )
+        return self.state.early_stopping_bad_epochs >= patience and not improved
 
 
 def apply_configured_gradient_checkpointing(model: HERADGM, config: Mapping[str, Any]) -> dict[str, bool]:
@@ -613,6 +660,41 @@ def _thresholds_from_mapping(data: Mapping[str, Any]) -> Thresholds:
 
 def _effective_batch_size(config: Mapping[str, Any]) -> int:
     return int(config["dataloader"]["batch_size"]) * int(config["training"]["gradient_accumulation_steps"])
+
+
+def _early_stopping_improved(
+    *,
+    current: float,
+    best: float | None,
+    mode: str,
+    min_delta: float,
+) -> bool:
+    if best is None:
+        return True
+    if mode == "max":
+        return current > best + min_delta
+    if mode == "min":
+        return current < best - min_delta
+    raise ValueError(f"Unsupported early stopping mode: {mode!r}")
+
+
+def _early_stopping_status(
+    config: Mapping[str, Any],
+    state: TrainingState,
+    metrics: Mapping[str, Any],
+) -> dict[str, Any]:
+    settings = config["training"]["early_stopping"]
+    metric = str(settings["metric"])
+    return {
+        "enabled": bool(settings["enabled"]),
+        "metric": metric,
+        "mode": str(settings["mode"]),
+        "patience": int(settings["patience"]),
+        "min_delta": float(settings["min_delta"]),
+        "current": float(metrics[metric]) if metric in metrics and metrics[metric] is not None else None,
+        "best": state.early_stopping_best_metric,
+        "bad_epochs": state.early_stopping_bad_epochs,
+    }
 
 
 def _aggregate_router_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:

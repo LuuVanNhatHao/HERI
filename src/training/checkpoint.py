@@ -62,6 +62,8 @@ def save_checkpoint(
             "global_step": state.global_step,
             "best_metric": state.best_metric,
             "best_checkpoint": str(state.best_checkpoint) if state.best_checkpoint is not None else None,
+            "early_stopping_best_metric": state.early_stopping_best_metric,
+            "early_stopping_bad_epochs": state.early_stopping_bad_epochs,
             "thresholds": state.thresholds.as_dict(),
             "metrics": dict(metrics),
             "config": dict(config),

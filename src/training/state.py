@@ -16,4 +16,6 @@ class TrainingState:
     global_step: int = 0
     best_metric: float | None = None
     best_checkpoint: Path | None = None
+    early_stopping_best_metric: float | None = None
+    early_stopping_bad_epochs: int = 0
     thresholds: Thresholds = field(default_factory=lambda: DEFAULT_THRESHOLDS)

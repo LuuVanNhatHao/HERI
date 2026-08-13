@@ -607,6 +607,11 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "training.auto_resume.enabled",
         "training.auto_resume.run_dir",
         "training.auto_resume.checkpoint_name",
+        "training.early_stopping.enabled",
+        "training.early_stopping.metric",
+        "training.early_stopping.mode",
+        "training.early_stopping.patience",
+        "training.early_stopping.min_delta",
         "training.stages.stage_a_freeze_epochs",
         "training.stages.stage_b_unfreeze_last_blocks.siglip2",
         "training.stages.stage_b_unfreeze_last_blocks.dinov3",
@@ -676,6 +681,12 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("training.gradient_accumulation_steps must be positive")
     if int(require_key(config, "training.micro_batch_size")) != int(require_key(config, "dataloader.batch_size")):
         raise ConfigError("training.micro_batch_size must equal dataloader.batch_size")
+    if str(require_key(config, "training.early_stopping.mode")) not in {"max", "min"}:
+        raise ConfigError("training.early_stopping.mode must be max or min")
+    if int(require_key(config, "training.early_stopping.patience")) < 0:
+        raise ConfigError("training.early_stopping.patience must be non-negative")
+    if float(require_key(config, "training.early_stopping.min_delta")) < 0:
+        raise ConfigError("training.early_stopping.min_delta must be non-negative")
     for key in (
         "loss.lambda_attr",
         "loss.lambda_bin",

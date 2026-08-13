@@ -19,7 +19,14 @@ def test_checkpoint_save_and_resume_model_optimizer(tmp_path: Path) -> None:
     )
     model(synthetic_batch(), features=synthetic_features())
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-    state = TrainingState(epoch=2, global_step=5, best_metric=0.7, thresholds=DEFAULT_THRESHOLDS)
+    state = TrainingState(
+        epoch=2,
+        global_step=5,
+        best_metric=0.7,
+        early_stopping_best_metric=0.72,
+        early_stopping_bad_epochs=2,
+        thresholds=DEFAULT_THRESHOLDS,
+    )
     path = tmp_path / "checkpoint.pt"
     save_checkpoint(
         path=path,
@@ -37,5 +44,7 @@ def test_checkpoint_save_and_resume_model_optimizer(tmp_path: Path) -> None:
         next(model.parameters()).add_(1.0)
     checkpoint = load_checkpoint(path=path, model=model, optimizer=optimizer, restore_rng=False)
     assert checkpoint["epoch"] == 2
+    assert checkpoint["early_stopping_best_metric"] == 0.72
+    assert checkpoint["early_stopping_bad_epochs"] == 2
     for key, value in model.state_dict().items():
         assert torch.equal(value, saved[key])
