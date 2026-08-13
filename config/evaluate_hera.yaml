@@ -220,6 +220,7 @@ optimizer:
 scheduler:
   type: linear_warmup
   warmup_steps: 500
+  resume_horizon_policy: continue_from_checkpoint_lr
 
 thresholding:
   enabled: true

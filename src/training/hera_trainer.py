@@ -20,10 +20,14 @@ from src.evaluation.evaluator import compute_metrics_and_reports, move_batch_to_
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADGM
 from src.thresholding.tuner import DEFAULT_THRESHOLDS, Thresholds, tune_thresholds
-from src.training.checkpoint import load_checkpoint, save_checkpoint
+from src.training.checkpoint import restore_checkpoint, save_checkpoint
 from src.training.optimizer import apply_training_stage, create_optimizer, parameter_accounting
 from src.training.precision import PrecisionManager
-from src.training.scheduler import create_scheduler
+from src.training.scheduler import (
+    create_continuation_scheduler_plan,
+    create_scheduler_from_plan,
+    create_scheduler_plan,
+)
 from src.training.state import TrainingState
 from src.utils.config import dump_yaml
 from src.utils.environment import collect_environment_metadata
@@ -136,7 +140,8 @@ class HERATrainer:
         self.cuda_memory_logging = bool(config["runtime"]["cuda_memory_logging"]["enabled"])
         self.resume_checkpoint_path = _resolve_hera_resume_checkpoint(config)
         self.run_dir = create_hera_run_dir(config, resume_checkpoint=self.resume_checkpoint_path)
-        dump_yaml(config, self.run_dir / "effective_config.yaml")
+        if self.resume_checkpoint_path is None:
+            dump_yaml(config, self.run_dir / "effective_config.yaml")
         environment = collect_environment_metadata(Path.cwd())
         environment["backbones"] = config["backbones"]
         (self.run_dir / "environment.json").write_text(
@@ -178,6 +183,7 @@ class HERATrainer:
         self._best_score_tuple: tuple[float, ...] | None = None
         self._ranked_checkpoints: list[tuple[tuple[float, ...], Path]] = []
         self._last_parameter_counts: dict[str, dict[str, int]] = {}
+        self._scheduler_plan: dict[str, Any] | None = None
 
     def run(self) -> Path:
         """Run configured full HERA training."""
@@ -187,11 +193,13 @@ class HERATrainer:
         max_val_batches = self.config["runtime"].get("max_val_batches")
         train_batches = min(len(self.train_loader), max_train_batches or len(self.train_loader))
         accumulation = int(self.config["training"]["gradient_accumulation_steps"])
-        total_steps = max(1, total_epochs * math.ceil(max(1, train_batches) / accumulation))
+        optimizer_steps_per_epoch = max(1, math.ceil(max(1, train_batches) / accumulation))
+        total_steps = max(1, total_epochs * optimizer_steps_per_epoch)
 
         optimizer: torch.optim.Optimizer | None = None
         scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
         resume_path = self.resume_checkpoint_path
+        resume_payload: dict[str, Any] | None = None
         start_epoch = 1
         resume_checkpoint_epoch: int | None = None
         if resume_path:
@@ -202,6 +210,13 @@ class HERATrainer:
                 raise RuntimeError(
                     f"Resume checkpoint epoch {resume_checkpoint_epoch} already reached configured total_epochs={total_epochs}"
                 )
+            _persist_resume_config_snapshots(
+                run_dir=self.run_dir,
+                checkpoint=resume_payload,
+                current_config=self.config,
+                resume_epoch=resume_checkpoint_epoch,
+                target_total_epochs=total_epochs,
+            )
 
         for epoch in range(start_epoch, total_epochs + 1):
             self.state.epoch = epoch
@@ -210,27 +225,32 @@ class HERATrainer:
                 self._initialize_lazy_modules()
             if optimizer is None or self._stage_changed_requires_optimizer_rebuild(epoch):
                 optimizer, group_summaries = create_optimizer(self.model, self.config)
-                scheduler = create_scheduler(optimizer, self.config, total_steps=total_steps)
+                if resume_payload is not None and resume_checkpoint_epoch is not None:
+                    crosses_stage_boundary = _stage_name(self.config, resume_checkpoint_epoch) != _stage_name(
+                        self.config,
+                        epoch,
+                    )
+                    scheduler = self._restore_resume_checkpoint(
+                        checkpoint=resume_payload,
+                        optimizer=optimizer,
+                        total_epochs=total_epochs,
+                        total_steps=total_steps,
+                        optimizer_steps_per_epoch=optimizer_steps_per_epoch,
+                        resume_checkpoint_epoch=resume_checkpoint_epoch,
+                        crosses_stage_boundary=crosses_stage_boundary,
+                    )
+                    self._restore_training_state(resume_payload)
+                    self.state.epoch = epoch
+                    if crosses_stage_boundary:
+                        tqdm.write("Resume crosses STAGE A -> STAGE B; optimizer was rebuilt for the new stage.")
+                    resume_payload = None
+                    resume_path = None
+                else:
+                    self._scheduler_plan = create_scheduler_plan(self.config, total_steps=total_steps)
+                    scheduler = create_scheduler_from_plan(optimizer, self._scheduler_plan)
                 self._last_parameter_counts = parameter_accounting(self.model)
                 tqdm.write(f"Parameter accounting: {self._last_parameter_counts}")
                 tqdm.write(f"Optimizer groups: {[summary.__dict__ for summary in group_summaries]}")
-            if resume_path and resume_checkpoint_epoch is not None:
-                crosses_stage_boundary = _stage_name(self.config, resume_checkpoint_epoch) != _stage_name(
-                    self.config,
-                    epoch,
-                )
-                checkpoint = load_checkpoint(
-                    path=resume_path,
-                    model=self.model,
-                    optimizer=None if crosses_stage_boundary else optimizer,
-                    scheduler=None if crosses_stage_boundary else scheduler,
-                    scaler=None if crosses_stage_boundary else self.precision.scaler,
-                )
-                self._restore_training_state(checkpoint)
-                self.state.epoch = epoch
-                if crosses_stage_boundary:
-                    tqdm.write("Resume crosses STAGE A -> STAGE B; optimizer was rebuilt for the new stage.")
-                resume_path = None
             train_losses = self._train_one_epoch(
                 optimizer=optimizer,
                 scheduler=scheduler,
@@ -303,6 +323,82 @@ class HERATrainer:
         if self.state.best_checkpoint is None:
             raise RuntimeError("HERA training finished without producing a best checkpoint")
         return self.state.best_checkpoint
+
+    def _restore_resume_checkpoint(
+        self,
+        *,
+        checkpoint: dict[str, Any],
+        optimizer: torch.optim.Optimizer,
+        total_epochs: int,
+        total_steps: int,
+        optimizer_steps_per_epoch: int,
+        resume_checkpoint_epoch: int,
+        crosses_stage_boundary: bool,
+    ) -> torch.optim.lr_scheduler.LRScheduler | None:
+        if crosses_stage_boundary:
+            self._scheduler_plan = create_scheduler_plan(self.config, total_steps=total_steps)
+            scheduler = create_scheduler_from_plan(optimizer, self._scheduler_plan)
+            restore_checkpoint(checkpoint=checkpoint, model=self.model)
+            return scheduler
+
+        source_total_epochs = _checkpoint_total_epochs(checkpoint)
+        if total_epochs < source_total_epochs:
+            raise RuntimeError(
+                "Configured training horizon is shorter than the resumed checkpoint plan: "
+                f"checkpoint_total_epochs={source_total_epochs}, configured_total_epochs={total_epochs}"
+            )
+        if total_epochs > source_total_epochs:
+            policy = str(self.config["scheduler"]["resume_horizon_policy"])
+            if policy != "continue_from_checkpoint_lr":
+                raise RuntimeError(
+                    "Training horizon changed during resume but scheduler.resume_horizon_policy does not allow "
+                    f"a no-jump continuation: policy={policy!r}"
+                )
+            restore_checkpoint(
+                checkpoint=checkpoint,
+                model=self.model,
+                optimizer=optimizer,
+                scaler=self.precision.scaler,
+            )
+            remaining_steps = max(1, (total_epochs - resume_checkpoint_epoch) * optimizer_steps_per_epoch)
+            anchor_lrs = [float(group["lr"]) for group in optimizer.param_groups]
+            self._scheduler_plan = create_continuation_scheduler_plan(
+                self.config,
+                remaining_steps=remaining_steps,
+                source_total_epochs=source_total_epochs,
+                resume_epoch=resume_checkpoint_epoch,
+                target_total_epochs=total_epochs,
+                start_global_step=int(checkpoint["global_step"]),
+                anchor_lrs=anchor_lrs,
+            )
+            scheduler = create_scheduler_from_plan(
+                optimizer,
+                self._scheduler_plan,
+                anchor_current_lrs=True,
+            )
+            tqdm.write(
+                "Extended training horizon with no-jump LR continuation: "
+                f"epochs={source_total_epochs}->{total_epochs}, "
+                f"resume_epoch={resume_checkpoint_epoch}, remaining_optimizer_steps={remaining_steps}, "
+                f"anchor_lrs={anchor_lrs}"
+            )
+            return scheduler
+
+        checkpoint_plan = checkpoint.get("scheduler_plan")
+        self._scheduler_plan = (
+            dict(checkpoint_plan)
+            if isinstance(checkpoint_plan, Mapping)
+            else create_scheduler_plan(self.config, total_steps=total_steps)
+        )
+        scheduler = create_scheduler_from_plan(optimizer, self._scheduler_plan)
+        restore_checkpoint(
+            checkpoint=checkpoint,
+            model=self.model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            scaler=self.precision.scaler,
+        )
+        return scheduler
 
     def _apply_stage(self, epoch: int) -> None:
         stage = _stage_name(self.config, epoch)
@@ -454,6 +550,12 @@ class HERATrainer:
         primary = str(self.config["checkpointing"]["selection_metric"])
         score_tuple = _selection_score_tuple(metrics, self.config)
         improved = self._best_score_tuple is None or score_tuple > self._best_score_tuple
+        keep_best = bool(self.config["checkpointing"].get("keep_best", True))
+        if improved and keep_best:
+            self._best_score_tuple = score_tuple
+            self.state.best_metric = float(score_tuple[0])
+            self.state.best_score = score_tuple
+            self.state.best_checkpoint = self.run_dir / "checkpoints" / "best.pt"
         last_path = self.run_dir / "checkpoints" / "last.pt"
         if bool(self.config["checkpointing"].get("keep_last", True)):
             save_checkpoint(
@@ -466,6 +568,7 @@ class HERATrainer:
                 metrics=epoch_metrics,
                 config=self.config,
                 precision=self.precision.actual,
+                scheduler_plan=self._scheduler_plan,
             )
             tqdm.write(f"Saved last checkpoint: {last_path}")
         epoch_threshold_path = self.run_dir / "thresholds" / f"epoch_{self.state.epoch:03d}_thresholds.json"
@@ -494,6 +597,7 @@ class HERATrainer:
                 metrics=epoch_metrics,
                 config=self.config,
                 precision=self.precision.actual,
+                scheduler_plan=self._scheduler_plan,
             )
             tqdm.write(f"Saved ranked checkpoint: {ranked_path}")
             self._ranked_checkpoints.append((score_tuple, ranked_path))
@@ -502,11 +606,10 @@ class HERATrainer:
                 if stale_path.exists():
                     stale_path.unlink()
             self._ranked_checkpoints = self._ranked_checkpoints[:top_k]
-        if improved and bool(self.config["checkpointing"].get("keep_best", True)):
-            self._best_score_tuple = score_tuple
-            self.state.best_metric = float(score_tuple[0])
-            best_path = self.run_dir / "checkpoints" / "best.pt"
-            self.state.best_checkpoint = best_path
+        if improved and keep_best:
+            best_path = self.state.best_checkpoint
+            if best_path is None:
+                raise RuntimeError("Best checkpoint path was not initialized")
             save_checkpoint(
                 path=best_path,
                 model=self.model,
@@ -517,6 +620,7 @@ class HERATrainer:
                 metrics=epoch_metrics,
                 config=self.config,
                 precision=self.precision.actual,
+                scheduler_plan=self._scheduler_plan,
             )
             tqdm.write(f"Saved best checkpoint: {best_path}")
             (self.run_dir / "thresholds" / "best_thresholds.json").write_text(
@@ -536,6 +640,8 @@ class HERATrainer:
     def _restore_training_state(self, checkpoint: Mapping[str, Any]) -> None:
         self.state.global_step = int(checkpoint["global_step"])
         self.state.best_metric = checkpoint.get("best_metric")
+        best_score = checkpoint.get("best_score")
+        self.state.best_score = tuple(float(value) for value in best_score) if best_score is not None else None
         self.state.best_checkpoint = (
             Path(str(checkpoint["best_checkpoint"]))
             if checkpoint.get("best_checkpoint") is not None
@@ -544,11 +650,27 @@ class HERATrainer:
         threshold_data = checkpoint.get("thresholds")
         if threshold_data:
             self.state.thresholds = _thresholds_from_mapping(threshold_data)
-        if self.state.best_metric is not None:
+        if self.state.best_score is not None:
+            self._best_score_tuple = self.state.best_score
+        elif self.state.best_metric is not None:
             self._best_score_tuple = (float(self.state.best_metric),)
-        early_best = checkpoint.get("early_stopping_best_metric", self.state.best_metric)
-        self.state.early_stopping_best_metric = float(early_best) if early_best is not None else None
-        self.state.early_stopping_bad_epochs = int(checkpoint.get("early_stopping_bad_epochs", 0))
+        if "early_stopping_best_metric" in checkpoint and "early_stopping_bad_epochs" in checkpoint:
+            early_best = checkpoint.get("early_stopping_best_metric")
+            self.state.early_stopping_best_metric = float(early_best) if early_best is not None else None
+            self.state.early_stopping_bad_epochs = int(checkpoint["early_stopping_bad_epochs"])
+        else:
+            early_best, bad_epochs = _recover_early_stopping_state(
+                self.history_path,
+                self.config["training"]["early_stopping"],
+            )
+            if early_best is None:
+                early_best = float(self.state.best_metric) if self.state.best_metric is not None else None
+            self.state.early_stopping_best_metric = early_best
+            self.state.early_stopping_bad_epochs = bad_epochs
+            tqdm.write(
+                "Recovered legacy early-stopping state: "
+                f"best={early_best}, bad_epochs={bad_epochs}"
+            )
 
     def _log_cuda_runtime_state(self, label: str) -> None:
         if not self.cuda_memory_logging:
@@ -602,6 +724,73 @@ class HERATrainer:
             f"mode={settings['mode']}, min_delta={float(settings['min_delta']):.6f}"
         )
         return self.state.early_stopping_bad_epochs >= patience and not improved
+
+
+def _checkpoint_total_epochs(checkpoint: Mapping[str, Any]) -> int:
+    checkpoint_config = checkpoint.get("config")
+    if not isinstance(checkpoint_config, Mapping):
+        raise RuntimeError("Resume checkpoint is missing its effective config")
+    training = checkpoint_config.get("training")
+    if not isinstance(training, Mapping) or "epochs" not in training:
+        raise RuntimeError("Resume checkpoint config is missing training.epochs")
+    return int(training["epochs"])
+
+
+def _persist_resume_config_snapshots(
+    *,
+    run_dir: Path,
+    checkpoint: Mapping[str, Any],
+    current_config: Mapping[str, Any],
+    resume_epoch: int,
+    target_total_epochs: int,
+) -> None:
+    """Preserve both checkpoint and continuation configs in a resumed run."""
+
+    checkpoint_config = checkpoint.get("config")
+    if not isinstance(checkpoint_config, Mapping):
+        raise RuntimeError("Resume checkpoint is missing its effective config")
+    history_dir = run_dir / "config_history"
+    dump_yaml(
+        checkpoint_config,
+        history_dir / f"checkpoint_epoch_{resume_epoch:03d}_config.yaml",
+    )
+    dump_yaml(
+        current_config,
+        history_dir / f"resume_epoch_{resume_epoch + 1:03d}_target_{target_total_epochs:03d}_config.yaml",
+    )
+    dump_yaml(current_config, run_dir / "effective_config.yaml")
+
+
+def _recover_early_stopping_state(
+    history_path: Path,
+    settings: Mapping[str, Any],
+) -> tuple[float | None, int]:
+    """Reconstruct early-stop state for checkpoints written before it was persisted."""
+
+    if not history_path.exists():
+        return None, 0
+    metric = str(settings["metric"])
+    column = f"val_{metric}"
+    best: float | None = None
+    bad_epochs = 0
+    with history_path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            raw_value = row.get(column)
+            if raw_value in (None, ""):
+                continue
+            current = float(raw_value)
+            improved = _early_stopping_improved(
+                current=current,
+                best=best,
+                mode=str(settings["mode"]),
+                min_delta=float(settings["min_delta"]),
+            )
+            if improved:
+                best = current
+                bad_epochs = 0
+            else:
+                bad_epochs += 1
+    return best, bad_epochs
 
 
 def apply_configured_gradient_checkpointing(model: HERADGM, config: Mapping[str, Any]) -> dict[str, bool]:

@@ -47,6 +47,7 @@ def save_checkpoint(
     metrics: Mapping[str, Any],
     config: Mapping[str, Any],
     precision: str,
+    scheduler_plan: Mapping[str, Any] | None = None,
 ) -> None:
     """Save a complete resume-capable checkpoint."""
 
@@ -61,6 +62,7 @@ def save_checkpoint(
             "epoch": state.epoch,
             "global_step": state.global_step,
             "best_metric": state.best_metric,
+            "best_score": list(state.best_score) if state.best_score is not None else None,
             "best_checkpoint": str(state.best_checkpoint) if state.best_checkpoint is not None else None,
             "early_stopping_best_metric": state.early_stopping_best_metric,
             "early_stopping_bad_epochs": state.early_stopping_bad_epochs,
@@ -68,6 +70,7 @@ def save_checkpoint(
             "metrics": dict(metrics),
             "config": dict(config),
             "precision": precision,
+            "scheduler_plan": dict(scheduler_plan) if scheduler_plan is not None else None,
             "rng_state": rng_state(),
         },
         path,
@@ -86,6 +89,27 @@ def load_checkpoint(
     """Load checkpoint and restore all requested training state."""
 
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    return restore_checkpoint(
+        checkpoint=checkpoint,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        scaler=scaler,
+        restore_rng=restore_rng,
+    )
+
+
+def restore_checkpoint(
+    *,
+    checkpoint: dict[str, Any],
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer | None = None,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+    scaler: torch.cuda.amp.GradScaler | None = None,
+    restore_rng: bool = True,
+) -> dict[str, Any]:
+    """Restore an already-loaded checkpoint without a second disk read."""
+
     model.load_state_dict(checkpoint["model"])
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer"])

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -11,10 +12,12 @@ from hera_phase7_fixtures import FixtureGraphReasoner, TinyBackbone, hera_test_c
 from phase2_fixtures import synthetic_batch, synthetic_features
 from src.models.hera import HERADGM
 from src.training.hera_trainer import (
+    HERATrainer,
     _cuda_memory_postfix,
     _cuda_memory_summary,
     _early_stopping_improved,
     _ensure_finite_losses,
+    _recover_early_stopping_state,
     _resolve_hera_resume_checkpoint,
     apply_configured_gradient_checkpointing,
 )
@@ -170,3 +173,68 @@ def test_hera_early_stopping_improvement_respects_mode_and_delta() -> None:
 def test_hera_early_stopping_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError, match="Unsupported early stopping mode"):
         _early_stopping_improved(current=0.8, best=0.7, mode="sideways", min_delta=0.0)
+
+
+def test_legacy_early_stopping_state_is_recovered_from_history(tmp_path: Path) -> None:
+    history = tmp_path / "history.csv"
+    history.write_text(
+        "epoch,val_cf1\n"
+        "6,0.7855\n"
+        "7,0.7900\n"
+        "8,0.7950\n"
+        "9,0.7948\n"
+        "10,0.7940\n",
+        encoding="utf-8",
+    )
+
+    best, bad_epochs = _recover_early_stopping_state(
+        history,
+        {"metric": "cf1", "mode": "max", "min_delta": 0.001},
+    )
+
+    assert best == pytest.approx(0.7950)
+    assert bad_epochs == 2
+
+
+def test_legacy_epoch_10_checkpoint_extends_to_20_without_lr_jump() -> None:
+    trainer = HERATrainer.__new__(HERATrainer)
+    trainer.config = {
+        "scheduler": {
+            "type": "linear_warmup",
+            "warmup_steps": 500,
+            "resume_horizon_policy": "continue_from_checkpoint_lr",
+        }
+    }
+    trainer.model = torch.nn.Linear(2, 1)
+    trainer.precision = SimpleNamespace(scaler=None)
+    trainer._scheduler_plan = None
+    optimizer = torch.optim.AdamW(trainer.model.parameters(), lr=1e-4)
+    checkpoint_optimizer = torch.optim.AdamW(trainer.model.parameters(), lr=1e-4)
+    checkpoint_optimizer.param_groups[0]["lr"] = 3e-5
+    checkpoint_optimizer.param_groups[0]["initial_lr"] = 1e-4
+    checkpoint = {
+        "model": trainer.model.state_dict(),
+        "optimizer": checkpoint_optimizer.state_dict(),
+        "scheduler": None,
+        "scaler": None,
+        "epoch": 10,
+        "global_step": 65_060,
+        "config": {"training": {"epochs": 10}},
+    }
+
+    scheduler = trainer._restore_resume_checkpoint(
+        checkpoint=checkpoint,
+        optimizer=optimizer,
+        total_epochs=20,
+        total_steps=130_120,
+        optimizer_steps_per_epoch=6_506,
+        resume_checkpoint_epoch=10,
+        crosses_stage_boundary=False,
+    )
+
+    assert scheduler is not None
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(3e-5)
+    assert trainer._scheduler_plan["type"] == "linear_decay_continuation"
+    optimizer.step()
+    scheduler.step()
+    assert optimizer.param_groups[0]["lr"] < 3e-5

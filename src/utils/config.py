@@ -624,6 +624,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "optimizer.lr_backbones.deberta",
         "optimizer.weight_decay",
         "scheduler.type",
+        "scheduler.resume_horizon_policy",
         "thresholding.enabled",
         "checkpointing.selection_metric",
         "checkpointing.top_k",
@@ -687,6 +688,13 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("training.early_stopping.patience must be non-negative")
     if float(require_key(config, "training.early_stopping.min_delta")) < 0:
         raise ConfigError("training.early_stopping.min_delta must be non-negative")
+    if str(require_key(config, "scheduler.resume_horizon_policy")) not in {
+        "error",
+        "continue_from_checkpoint_lr",
+    }:
+        raise ConfigError(
+            "scheduler.resume_horizon_policy must be error or continue_from_checkpoint_lr"
+        )
     for key in (
         "loss.lambda_attr",
         "loss.lambda_bin",
