@@ -1,6 +1,7 @@
 import torch
 
 from src.evidence.budgeting import budget_features
+from src.evidence.visual_forensic import forensic_patch_descriptors
 
 
 def test_sequence_balanced_budget_preserves_source_indices() -> None:
@@ -34,3 +35,29 @@ def test_budget_handles_zero_valid_evidence_without_nan() -> None:
     assert budgeted.features.shape == (2, 0, 3)
     assert budgeted.mask.shape == (2, 0)
     assert torch.isfinite(budgeted.features).all()
+
+
+def test_forensic_descriptors_respond_to_high_frequency_artifacts() -> None:
+    smooth = torch.full((1, 3, 32, 32), 0.5)
+    checker = ((torch.arange(32).view(1, -1) + torch.arange(32).view(-1, 1)) % 2).float()
+    checker = checker.unsqueeze(0).repeat(1, 3, 1, 1)
+    fallback = torch.zeros(1, 4, 8)
+    mask = torch.ones(1, 32, 32, dtype=torch.bool)
+
+    smooth_features, smooth_scores = forensic_patch_descriptors(
+        image=smooth,
+        image_content_mask=mask,
+        grid_height=2,
+        grid_width=2,
+        fallback=fallback,
+    )
+    artifact_features, artifact_scores = forensic_patch_descriptors(
+        image=checker,
+        image_content_mask=mask,
+        grid_height=2,
+        grid_width=2,
+        fallback=fallback,
+    )
+
+    assert artifact_scores.mean() > smooth_scores.mean()
+    assert not torch.allclose(artifact_features, smooth_features)

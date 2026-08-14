@@ -28,6 +28,7 @@ class HERADecisionOutput:
     face_source_indices: torch.Tensor | None = None
     text_word_ids: torch.Tensor | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    evidence_support: torch.Tensor | None = None
 
     def validate(self) -> None:
         """Validate Phase-5 tensor shapes, ranges, masks, and hypothesis order."""
@@ -83,6 +84,13 @@ class HERADecisionOutput:
             raise ValueError("face_source_indices must align with image_grounding_mask")
         if self.text_word_ids is not None and self.text_word_ids.shape != self.text_grounding_mask.shape:
             raise ValueError("text_word_ids must align with text_grounding_mask")
+        if self.evidence_support is not None:
+            if self.evidence_support.shape != (batch, hypotheses):
+                raise ValueError("evidence_support must be [B,4]")
+            if not torch.isfinite(self.evidence_support).all():
+                raise FloatingPointError("evidence_support contains non-finite values")
+            if bool(((self.evidence_support < 0) | (self.evidence_support > 1)).any()):
+                raise ValueError("evidence_support must be in [0,1]")
 
 
 @dataclass
@@ -92,6 +100,8 @@ class HERADGMOutput(HERADecisionOutput):
     evidence_metadata: dict[str, Any] = field(default_factory=dict)
     routing_metadata: dict[str, Any] = field(default_factory=dict)
     graph_metadata: dict[str, Any] = field(default_factory=dict)
+    cross_modal_alignment_loss: torch.Tensor | None = None
+    router_regularization_loss: torch.Tensor | None = None
 
     def validate(self) -> None:
         """Validate the complete HERA output and Noisy-OR authenticity contract."""
@@ -104,3 +114,7 @@ class HERADGMOutput(HERADecisionOutput):
             raise ValueError("HERADGMOutput metadata must record binary_shortcut=False")
         if self.metadata.get("binary_aggregation") != "noisy_or":
             raise ValueError("HERADGMOutput metadata must record binary_aggregation='noisy_or'")
+        for name in ("cross_modal_alignment_loss", "router_regularization_loss"):
+            value = getattr(self, name)
+            if value is not None and (value.ndim != 0 or not torch.isfinite(value)):
+                raise ValueError(f"{name} must be a finite scalar")

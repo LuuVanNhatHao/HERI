@@ -11,7 +11,7 @@ import torch
 from packaging.version import InvalidVersion, Version
 
 
-SUPPORTED_TRANSFORMERS_SPEC = ">=4.40,<5.0"
+SUPPORTED_TRANSFORMERS_SPEC = ">=4.57.2,<5.0"
 
 
 class TransformersCompatibilityError(RuntimeError):
@@ -68,7 +68,7 @@ def _ensure_supported_transformers_version(requested_feature: str) -> None:
         parsed = Version(version)
     except InvalidVersion:
         return
-    if parsed < Version("4.40") or parsed >= Version("5.0"):
+    if parsed < Version("4.57.2") or parsed >= Version("5.0"):
         raise_transformers_diagnostic(
             requested_feature,
             f"unsupported transformers version {version!r}; install requirements.txt "

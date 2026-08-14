@@ -197,6 +197,7 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
             hypothesis_features=decision_output.hypothesis_features,
             face_source_indices=decision_output.face_source_indices,
             text_word_ids=decision_output.text_word_ids,
+            evidence_support=decision_output.evidence_support,
             metadata=metadata,
             evidence_metadata={
                 "families": {
@@ -214,6 +215,8 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
                 "statistics": dict(graph_output.graph_statistics),
                 "reasoning_cycles": len(graph_output.intermediate_hypothesis_features),
             },
+            cross_modal_alignment_loss=evidence.cross_modal_metadata.alignment_loss,
+            router_regularization_loss=routed.regularization_loss,
         )
 
 

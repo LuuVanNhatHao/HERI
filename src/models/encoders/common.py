@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 
@@ -41,6 +42,34 @@ def masked_mean(tokens: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor
     mask_f = mask.to(tokens.dtype).unsqueeze(-1)
     denom = mask_f.sum(dim=1).clamp_min(1.0)
     return (tokens * mask_f).sum(dim=1) / denom
+
+
+def pixel_mask_to_patch_mask(
+    pixel_mask: torch.Tensor | None,
+    *,
+    grid_height: int,
+    grid_width: int,
+    batch_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Project a letterbox content mask onto a backbone patch grid.
+
+    A patch remains valid when it overlaps at least one content pixel. This
+    keeps boundary patches while excluding patches made entirely of padding.
+    """
+
+    if pixel_mask is None:
+        return torch.ones((batch_size, grid_height * grid_width), dtype=torch.bool, device=device)
+    if pixel_mask.ndim != 3 or pixel_mask.shape[0] != batch_size:
+        raise ValueError("pixel_mask must be [B,H,W] and match the image batch")
+    coverage = F.adaptive_avg_pool2d(
+        pixel_mask.to(device=device, dtype=torch.float32).unsqueeze(1),
+        output_size=(grid_height, grid_width),
+    ).squeeze(1)
+    patch_mask = coverage > 0.0
+    if bool((~patch_mask.any(dim=(1, 2))).any()):
+        raise ValueError("pixel_mask produced a sample with no valid image patches")
+    return patch_mask.reshape(batch_size, grid_height * grid_width)
 
 
 def infer_square_grid(num_tokens: int) -> tuple[int, int]:

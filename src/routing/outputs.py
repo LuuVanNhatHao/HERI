@@ -90,6 +90,7 @@ class RoutedEvidenceBatch:
     cross_modal_metadata: CrossModalMetadata
     original: HeterogeneousEvidenceBatch
     metadata: dict[str, Any] = field(default_factory=dict)
+    regularization_loss: torch.Tensor | None = None
 
     def families(self) -> dict[str, RoutedEvidenceSet]:
         """Return routed families by canonical name."""
@@ -114,6 +115,9 @@ class RoutedEvidenceBatch:
             if routed_set.provenance != original_set.provenance:
                 raise ValueError(f"{name}.provenance must be preserved unchanged")
         self.cross_modal_metadata.validate()
+        if self.regularization_loss is not None:
+            if self.regularization_loss.ndim != 0 or not torch.isfinite(self.regularization_loss):
+                raise ValueError("routing regularization_loss must be a finite scalar")
         self.as_graph_evidence().validate()
 
     def as_graph_evidence(self) -> HeterogeneousEvidenceBatch:

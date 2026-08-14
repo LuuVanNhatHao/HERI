@@ -66,12 +66,12 @@ evidence:
     text_context:
   visual_semantic:
     enabled: true
-    max_nodes: 64
-    budgeting: spatial_balanced
+    max_nodes: 96
+    budgeting: saliency_spatial
   visual_forensic:
     enabled: true
-    max_nodes: 64
-    budgeting: spatial_balanced
+    max_nodes: 96
+    budgeting: forensic_saliency
   face:
     enabled: true
     truncate: false
@@ -79,12 +79,12 @@ evidence:
     budgeting: ordered
   text_alignment:
     enabled: true
-    max_nodes: 32
-    budgeting: sequence_balanced
+    max_nodes: 64
+    budgeting: saliency_sequence
   text_context:
     enabled: true
-    max_nodes: 32
-    budgeting: sequence_balanced
+    max_nodes: 64
+    budgeting: saliency_sequence
   cross_modal:
     enabled: true
     similarity: cosine
@@ -115,8 +115,10 @@ routing:
     low_threshold: 0.25
     high_threshold: 0.75
   regularization:
-    enabled: false
-    weight: 0.0
+    enabled: true
+    weight: 0.05
+    target_mean: 0.75
+    min_std: 0.05
 
 graph:
   type: hgt
@@ -144,7 +146,7 @@ graph:
       k: 4
       bidirectional: true
     text_alignment_text_context:
-      method: full_bipartite
+      method: word_aligned
       bidirectional: true
     semantic_to_hypotheses:
       enabled: true
@@ -174,10 +176,11 @@ model:
 
 loss:
   lambda_attr: 1.0
-  lambda_bin: 1.0
+  lambda_bin: 0.1
   lambda_img: 1.0
   lambda_txt: 1.0
-  lambda_ev: 0.0
+  lambda_ev: 0.1
+  lambda_align: 0.1
 
 training:
   epochs: 20
@@ -195,6 +198,7 @@ training:
     mode: max
     patience: 3
     min_delta: 0.001
+    minimum_stage_b_epochs: 3
   stages:
     stage_a_freeze_epochs: 3
     stage_b_unfreeze_last_blocks:
@@ -260,7 +264,7 @@ dataloader:
 runtime:
   device: cuda
   precision: bf16
-  model_dtype: bf16
+  model_dtype: fp32
   cuda_memory_logging:
     enabled: true
   attn_implementation:
@@ -283,4 +287,4 @@ logging:
   level: INFO
 
 output:
-  root: outputs/phase7
+  root: outputs/phase7_v2

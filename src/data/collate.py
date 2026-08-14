@@ -50,6 +50,7 @@ def dgm4_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "id": [item["id"] for item in batch],
         "split": [item["split"] for item in batch],
         "image": torch.stack([item["image"] for item in batch]),
+        "image_content_mask": torch.stack([item["image_content_mask"] for item in batch]),
         "image_path": [item["image_path"] for item in batch],
         "annotation_image_path": [item["annotation_image_path"] for item in batch],
         "image_transform_meta": [item["image_transform_meta"] for item in batch],

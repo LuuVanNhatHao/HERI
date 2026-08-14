@@ -29,6 +29,8 @@ class EvidenceStructuralMetadata:
     text_attention_mask: torch.Tensor | None = None
     text_grounding_mask: torch.Tensor | None = None
     text_word_ids: torch.Tensor | None = None
+    image: torch.Tensor | None = None
+    image_content_mask: torch.Tensor | None = None
 
     @classmethod
     def from_batch(cls, batch: Mapping[str, Any]) -> "EvidenceStructuralMetadata":
@@ -40,6 +42,8 @@ class EvidenceStructuralMetadata:
             text_attention_mask=batch.get("text_attention_mask"),
             text_grounding_mask=batch.get("text_grounding_mask"),
             text_word_ids=batch.get("text_word_ids"),
+            image=batch.get("image"),
+            image_content_mask=batch.get("image_content_mask"),
         )
 
 
@@ -74,6 +78,7 @@ class HeterogeneousEvidenceExtractor(nn.Module):
         )
         self.visual_forensic_extractor = VisualForensicEvidenceExtractor(
             projector=self.projections["visual_forensic"],
+            hidden_dim=self.hidden_dim,
             max_nodes=int(visual_forensic["max_nodes"]),
             budgeting=str(visual_forensic.get("budgeting", "spatial_balanced")),
         )
@@ -116,7 +121,11 @@ class HeterogeneousEvidenceExtractor(nn.Module):
             else _empty_evidence("visual_semantic", batch_size, self.hidden_dim, device=device, dtype=dtype)
         )
         visual_forensic = (
-            self.visual_forensic_extractor(encoder_outputs.dinov3)
+            self.visual_forensic_extractor(
+                encoder_outputs.dinov3,
+                image=structural_metadata.image,
+                image_content_mask=structural_metadata.image_content_mask,
+            )
             if self.enabled["visual_forensic"]
             else _empty_evidence("visual_forensic", batch_size, self.hidden_dim, device=device, dtype=dtype)
         )
@@ -143,7 +152,12 @@ class HeterogeneousEvidenceExtractor(nn.Module):
             if self.enabled["text_context"]
             else _empty_evidence("text_context", batch_size, self.hidden_dim, device=device, dtype=dtype)
         )
-        cross_modal = self._cross_modal(visual_semantic=visual_semantic, text_alignment=text_alignment)
+        cross_modal = self._cross_modal(
+            visual_semantic=visual_semantic,
+            text_alignment=text_alignment,
+            native_image_global=encoder_outputs.siglip2.image_global,
+            native_text_global=encoder_outputs.siglip2.text_global,
+        )
         evidence = HeterogeneousEvidenceBatch(
             visual_semantic=visual_semantic,
             visual_forensic=visual_forensic,
@@ -155,12 +169,24 @@ class HeterogeneousEvidenceExtractor(nn.Module):
         evidence.validate()
         return evidence
 
-    def _cross_modal(self, *, visual_semantic: EvidenceSet, text_alignment: EvidenceSet) -> CrossModalMetadata:
+    def _cross_modal(
+        self,
+        *,
+        visual_semantic: EvidenceSet,
+        text_alignment: EvidenceSet,
+        native_image_global: torch.Tensor | None,
+        native_text_global: torch.Tensor | None,
+    ) -> CrossModalMetadata:
         if not self.cross_modal_enabled:
             return CrossModalMetadata(method="disabled")
         if self.cross_modal_similarity != "cosine":
             raise ValueError(f"Unsupported cross-modal similarity: {self.cross_modal_similarity!r}")
-        return cosine_similarity_metadata(visual=visual_semantic, text=text_alignment)
+        return cosine_similarity_metadata(
+            visual=visual_semantic,
+            text=text_alignment,
+            native_image_global=native_image_global,
+            native_text_global=native_text_global,
+        )
 
 
 def _empty_evidence(

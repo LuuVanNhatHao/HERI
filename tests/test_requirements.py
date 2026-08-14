@@ -39,7 +39,7 @@ def test_transformers_tokenizer_optional_dependencies_are_declared() -> None:
 
 def test_transformers_major_version_is_bounded_before_five() -> None:
     requirement = _requirement_line("transformers")
-    assert ">=4.40" in requirement
+    assert ">=4.57.2" in requirement
     assert "<5.0" in requirement
 
 

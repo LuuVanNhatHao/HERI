@@ -64,6 +64,13 @@ def test_hera_runtime_model_dtype_is_mandatory() -> None:
         validate_hera_config(_without_model_dtype("config/train_hera.yaml"), mode="train")
 
 
+def test_amp_rejects_low_precision_parameter_storage() -> None:
+    config = copy.deepcopy(load_yaml_config("config/train_hera.yaml"))
+    config["runtime"]["model_dtype"] = "bf16"
+    with pytest.raises(ConfigError, match="model_dtype must be fp32"):
+        validate_hera_config(config, mode="train")
+
+
 def test_hera_cuda_memory_logging_is_mandatory() -> None:
     with pytest.raises(ConfigError, match="runtime.cuda_memory_logging.enabled"):
         validate_hera_config(_without_cuda_memory_logging("config/train_hera.yaml"), mode="train")

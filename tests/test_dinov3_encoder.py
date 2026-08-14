@@ -75,6 +75,25 @@ def test_dinov3_patch_grid_failure_names_token_count() -> None:
         encoder(image=torch.zeros(1, 3, 384, 384))
 
 
+def test_dinov3_masks_letterbox_only_patches() -> None:
+    tokens = torch.zeros(1, 581, 4)
+    encoder = DINOv3Encoder(
+        model=DummyDINOModel(tokens),
+        image_mean=(0.0, 0.0, 0.0),
+        image_std=(1.0, 1.0, 1.0),
+        model_name="dummy-dinov3",
+    )
+    pixel_mask = torch.zeros(1, 384, 384, dtype=torch.bool)
+    pixel_mask[:, 84:300, :] = True
+
+    output = encoder(image=torch.zeros(1, 3, 384, 384), pixel_mask=pixel_mask)
+
+    grid_mask = output.patch_mask.reshape(1, 24, 24)
+    assert grid_mask[:, :5].sum().item() == 0
+    assert grid_mask[:, 19:].sum().item() == 0
+    assert grid_mask.sum().item() == 14 * 24
+
+
 def test_dinov3_partial_unfreeze_supports_chunked_encoder_blocks() -> None:
     model = ChunkedDINOModel()
     encoder = DINOv3Encoder(

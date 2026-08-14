@@ -21,7 +21,13 @@ from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADGM
 from src.thresholding.tuner import DEFAULT_THRESHOLDS, Thresholds, tune_thresholds
 from src.training.checkpoint import restore_checkpoint, save_checkpoint
-from src.training.optimizer import apply_training_stage, create_optimizer, parameter_accounting
+from src.training.optimizer import (
+    apply_training_stage,
+    create_optimizer,
+    load_compatible_optimizer_state,
+    migrate_optimizer_state,
+    parameter_accounting,
+)
 from src.training.precision import PrecisionManager
 from src.training.scheduler import (
     create_continuation_scheduler_plan,
@@ -153,7 +159,7 @@ class HERATrainer:
         self._log_cuda_runtime_state("after model load")
         if self.resume_checkpoint_path is not None:
             tqdm.write(f"Resume checkpoint selected: {self.resume_checkpoint_path}")
-        self.loss_fn = HERAMultitaskLoss(config["loss"])
+        self.loss_fn = HERAMultitaskLoss(config["loss"], routing_config=config["routing"])
         self.precision = PrecisionManager(
             precision=str(config["runtime"]["precision"]),
             device=self.device,
@@ -224,6 +230,7 @@ class HERATrainer:
             if not self._lazy_initialized:
                 self._initialize_lazy_modules()
             if optimizer is None or self._stage_changed_requires_optimizer_rebuild(epoch):
+                previous_optimizer = optimizer
                 optimizer, group_summaries = create_optimizer(self.model, self.config)
                 if resume_payload is not None and resume_checkpoint_epoch is not None:
                     crosses_stage_boundary = _stage_name(self.config, resume_checkpoint_epoch) != _stage_name(
@@ -245,6 +252,26 @@ class HERATrainer:
                         tqdm.write("Resume crosses STAGE A -> STAGE B; optimizer was rebuilt for the new stage.")
                     resume_payload = None
                     resume_path = None
+                elif previous_optimizer is not None:
+                    migrated = migrate_optimizer_state(previous_optimizer, optimizer)
+                    remaining_steps = max(1, (total_epochs - epoch + 1) * optimizer_steps_per_epoch)
+                    anchor_lrs = [float(group["lr"]) for group in optimizer.param_groups]
+                    self._scheduler_plan = create_continuation_scheduler_plan(
+                        self.config,
+                        remaining_steps=remaining_steps,
+                        source_total_epochs=total_epochs,
+                        resume_epoch=epoch - 1,
+                        target_total_epochs=total_epochs,
+                        start_global_step=self.state.global_step,
+                        anchor_lrs=anchor_lrs,
+                    )
+                    scheduler = create_scheduler_from_plan(
+                        optimizer, self._scheduler_plan, anchor_current_lrs=True
+                    )
+                    tqdm.write(
+                        "Stage B optimizer migration: "
+                        f"preserved_state_for={migrated} parameters, anchor_lrs={anchor_lrs}"
+                    )
                 else:
                     self._scheduler_plan = create_scheduler_plan(self.config, total_steps=total_steps)
                     scheduler = create_scheduler_from_plan(optimizer, self._scheduler_plan)
@@ -336,9 +363,26 @@ class HERATrainer:
         crosses_stage_boundary: bool,
     ) -> torch.optim.lr_scheduler.LRScheduler | None:
         if crosses_stage_boundary:
-            self._scheduler_plan = create_scheduler_plan(self.config, total_steps=total_steps)
-            scheduler = create_scheduler_from_plan(optimizer, self._scheduler_plan)
             restore_checkpoint(checkpoint=checkpoint, model=self.model)
+            loaded = load_compatible_optimizer_state(optimizer, checkpoint["optimizer"])
+            remaining_steps = max(1, (total_epochs - resume_checkpoint_epoch) * optimizer_steps_per_epoch)
+            anchor_lrs = [float(group["lr"]) for group in optimizer.param_groups]
+            self._scheduler_plan = create_continuation_scheduler_plan(
+                self.config,
+                remaining_steps=remaining_steps,
+                source_total_epochs=_checkpoint_total_epochs(checkpoint),
+                resume_epoch=resume_checkpoint_epoch,
+                target_total_epochs=total_epochs,
+                start_global_step=int(checkpoint["global_step"]),
+                anchor_lrs=anchor_lrs,
+            )
+            scheduler = create_scheduler_from_plan(
+                optimizer, self._scheduler_plan, anchor_current_lrs=True
+            )
+            tqdm.write(
+                "Cross-stage resume preserved compatible optimizer state: "
+                f"parameters={loaded}, anchor_lrs={anchor_lrs}"
+            )
             return scheduler
 
         source_total_epochs = _checkpoint_total_epochs(checkpoint)
@@ -474,6 +518,8 @@ class HERATrainer:
                 "L_img": f"{losses.image_grounding.detach().item():.4f}",
                 "L_txt": f"{losses.text_grounding.detach().item():.4f}",
                 "L_ev": f"{losses.evidence.detach().item():.4f}",
+                "L_align": f"{losses.alignment.detach().item():.4f}",
+                "L_router": f"{losses.router.detach().item():.4f}",
                 "lr": f"{optimizer.param_groups[0]['lr']:.2e}",
                 "stage": _stage_name(self.config, self.state.epoch),
             }
@@ -520,6 +566,8 @@ class HERATrainer:
             "train_image_grounding_loss": epoch_metrics["train"].get("image_grounding"),
             "train_text_grounding_loss": epoch_metrics["train"].get("text_grounding"),
             "train_evidence_loss": epoch_metrics["train"].get("evidence"),
+            "train_alignment_loss": epoch_metrics["train"].get("alignment"),
+            "train_router_loss": epoch_metrics["train"].get("router"),
             "val_cf1": epoch_metrics["val"].get("cf1"),
             "val_map": epoch_metrics["val"].get("map"),
             "val_auc": epoch_metrics["val"].get("auc"),
@@ -704,16 +752,33 @@ class HERATrainer:
         if value is None:
             raise ValueError(f"Early stopping metric {metric!r} is missing from validation metrics")
         current = float(value)
+        freeze_epochs = int(self.config["training"]["stages"]["stage_a_freeze_epochs"])
+        stage_b_epoch = self.state.epoch - freeze_epochs
+        minimum_stage_b_epochs = int(settings["minimum_stage_b_epochs"])
+        if self.state.epoch <= freeze_epochs:
+            if _early_stopping_improved(
+                current=current,
+                best=self.state.early_stopping_best_metric,
+                mode=str(settings["mode"]),
+                min_delta=float(settings["min_delta"]),
+            ):
+                self.state.early_stopping_best_metric = current
+            self.state.early_stopping_bad_epochs = 0
+            return False
+        if stage_b_epoch == 1:
+            self.state.early_stopping_best_metric = None
+            self.state.early_stopping_bad_epochs = 0
         improved = _early_stopping_improved(
             current=current,
             best=self.state.early_stopping_best_metric,
             mode=str(settings["mode"]),
             min_delta=float(settings["min_delta"]),
         )
+        grace_active = stage_b_epoch <= minimum_stage_b_epochs
         if improved:
             self.state.early_stopping_best_metric = current
             self.state.early_stopping_bad_epochs = 0
-        else:
+        elif not grace_active:
             self.state.early_stopping_bad_epochs += 1
         patience = int(settings["patience"])
         tqdm.write(
@@ -723,7 +788,11 @@ class HERATrainer:
             f"bad_epochs={self.state.early_stopping_bad_epochs}/{patience}, "
             f"mode={settings['mode']}, min_delta={float(settings['min_delta']):.6f}"
         )
-        return self.state.early_stopping_bad_epochs >= patience and not improved
+        return (
+            not grace_active
+            and self.state.early_stopping_bad_epochs >= patience
+            and not improved
+        )
 
 
 def _checkpoint_total_epochs(checkpoint: Mapping[str, Any]) -> int:
@@ -880,6 +949,7 @@ def _early_stopping_status(
         "mode": str(settings["mode"]),
         "patience": int(settings["patience"]),
         "min_delta": float(settings["min_delta"]),
+        "minimum_stage_b_epochs": int(settings["minimum_stage_b_epochs"]),
         "current": float(metrics[metric]) if metric in metrics and metrics[metric] is not None else None,
         "best": state.early_stopping_best_metric,
         "bad_epochs": state.early_stopping_bad_epochs,

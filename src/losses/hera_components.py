@@ -21,6 +21,8 @@ class HERALossResult:
     image_grounding: torch.Tensor
     text_grounding: torch.Tensor
     evidence: torch.Tensor
+    alignment: torch.Tensor
+    router: torch.Tensor
 
     def as_dict(self) -> dict[str, float]:
         """Detach losses for logging and smoke reports."""
@@ -32,18 +34,31 @@ class HERALossResult:
             "image_grounding": float(self.image_grounding.detach().cpu()),
             "text_grounding": float(self.text_grounding.detach().cpu()),
             "evidence": float(self.evidence.detach().cpu()),
+            "alignment": float(self.alignment.detach().cpu()),
+            "router": float(self.router.detach().cpu()),
         }
 
 
 class HERAMultitaskLoss:
     """Compute Phase-5 losses with explicit hypothesis applicability."""
 
-    def __init__(self, weights: Mapping[str, float]) -> None:
+    def __init__(
+        self,
+        weights: Mapping[str, float],
+        routing_config: Mapping[str, object] | None = None,
+    ) -> None:
         self.lambda_attr = float(weights["lambda_attr"])
         self.lambda_bin = float(weights["lambda_bin"])
         self.lambda_img = float(weights["lambda_img"])
         self.lambda_txt = float(weights["lambda_txt"])
         self.lambda_ev = float(weights.get("lambda_ev", 0.0))
+        self.lambda_align = float(weights.get("lambda_align", 0.0))
+        regularization = (routing_config or {}).get("regularization", {})
+        self.lambda_router = (
+            float(regularization.get("weight", 0.0))
+            if isinstance(regularization, Mapping) and bool(regularization.get("enabled", False))
+            else 0.0
+        )
 
     def __call__(self, output: HERADecisionOutput, batch: Mapping[str, torch.Tensor]) -> HERALossResult:
         """Compute L_attr + L_bin + L_img + L_txt + L_ev."""
@@ -57,16 +72,20 @@ class HERAMultitaskLoss:
             raise ValueError("binary_target must align with derived binary_logit [B]")
 
         attribution = F.binary_cross_entropy_with_logits(output.atomic_logits, atomic_target)
-        binary = F.binary_cross_entropy_with_logits(output.binary_logit, binary_target)
+        binary = target_consistent_noisy_or_loss(output.atomic_logits, atomic_target, binary_target)
         image_grounding = hypothesis_image_grounding_loss(output, batch, atomic_target=atomic_target)
         text_grounding = hypothesis_text_grounding_loss(output, batch, atomic_target=atomic_target)
         evidence = evidence_sufficiency_loss(output)
+        alignment = _optional_scalar_loss(output, "cross_modal_alignment_loss")
+        router = _optional_scalar_loss(output, "router_regularization_loss")
         total = (
             self.lambda_attr * attribution
             + self.lambda_bin * binary
             + self.lambda_img * image_grounding
             + self.lambda_txt * text_grounding
             + self.lambda_ev * evidence
+            + self.lambda_align * alignment
+            + self.lambda_router * router
         )
         return HERALossResult(
             total=total,
@@ -75,7 +94,32 @@ class HERAMultitaskLoss:
             image_grounding=image_grounding,
             text_grounding=text_grounding,
             evidence=evidence,
+            alignment=alignment,
+            router=router,
         )
+
+
+def target_consistent_noisy_or_loss(
+    atomic_logits: torch.Tensor,
+    atomic_target: torch.Tensor,
+    binary_target: torch.Tensor,
+) -> torch.Tensor:
+    """Binary calibration without pushing absent hypotheses up on fake rows."""
+
+    if atomic_logits.shape != atomic_target.shape:
+        raise ValueError("atomic logits/targets must align")
+    positive_or_real = (atomic_target > 0.5) | (binary_target.unsqueeze(1) < 0.5)
+    consistent_logits = torch.where(positive_or_real, atomic_logits, atomic_logits.detach())
+    log_not_fake = F.logsigmoid(-consistent_logits).sum(dim=1)
+    binary_logit = torch.log((-torch.expm1(log_not_fake)).clamp_min(1e-12)) - log_not_fake
+    return F.binary_cross_entropy_with_logits(binary_logit, binary_target)
+
+
+def _optional_scalar_loss(output: HERADecisionOutput, name: str) -> torch.Tensor:
+    value = getattr(output, name, None)
+    if isinstance(value, torch.Tensor):
+        return value
+    return output.atomic_logits.sum() * 0.0
 
 
 def image_grounding_applicability(atomic_target: torch.Tensor) -> torch.Tensor:
@@ -169,15 +213,18 @@ def evidence_sufficiency_loss(output: HERADecisionOutput) -> torch.Tensor:
     """Simple optional consistency: high hypotheses should have local evidence support."""
 
     atomic = output.atomic_probabilities
-    image_support = _masked_max_probabilities(
-        output.image_grounding_probabilities,
-        output.image_grounding_mask,
-    )
-    text_support = _masked_max_probabilities(
-        output.text_grounding_probabilities,
-        output.text_grounding_mask,
-    )
-    support = torch.cat([image_support, text_support], dim=1)
+    if output.evidence_support is not None:
+        support = output.evidence_support
+    else:
+        image_support = _masked_max_probabilities(
+            output.image_grounding_probabilities,
+            output.image_grounding_mask,
+        )
+        text_support = _masked_max_probabilities(
+            output.text_grounding_probabilities,
+            output.text_grounding_mask,
+        )
+        support = torch.cat([image_support, text_support], dim=1)
     if support.shape != atomic.shape:
         raise ValueError("Evidence support must align with atomic probabilities [B,4]")
     return torch.relu(atomic - support).mean()

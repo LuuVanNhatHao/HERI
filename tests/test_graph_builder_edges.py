@@ -45,7 +45,22 @@ def test_graph_builder_node_counts_and_core_edges() -> None:
     assert graph.x_dict[HYPOTHESIS].shape == (12, 12)
     assert graph.edge_index_dict[(VISUAL_SEMANTIC, SPATIAL_CORRESPONDS, VISUAL_FORENSIC)].shape[1] == 18
     assert graph.edge_index_dict[(VISUAL_SEMANTIC, SEMANTIC_ALIGNS, TEXT_ALIGNMENT)].shape[1] == 18
-    assert graph.edge_index_dict[(TEXT_ALIGNMENT, TOKEN_CONTEXTUALIZES, TEXT_CONTEXT)].shape[1] == 27
+    assert graph.edge_index_dict[(TEXT_ALIGNMENT, TOKEN_CONTEXTUALIZES, TEXT_CONTEXT)].shape[1] == 6
+    semantic_attrs = graph.edge_attr_dict[(VISUAL_SEMANTIC, SEMANTIC_ALIGNS, TEXT_ALIGNMENT)]
+    assert semantic_attrs.shape == (18, 2)
+    assert torch.any(semantic_attrs[:, 0] != 0)
+    assert torch.all(semantic_attrs[:, 1] == 1)
+    assert SEMANTIC_ALIGNS == "semantic_compares"
+
+    token_edges = graph.edge_index_dict[(TEXT_ALIGNMENT, TOKEN_CONTEXTUALIZES, TEXT_CONTEXT)]
+    src_local = graph.node_local_indices[TEXT_ALIGNMENT][token_edges[0]]
+    dst_local = graph.node_local_indices[TEXT_CONTEXT][token_edges[1]]
+    src_samples = graph.node_sample_indices[TEXT_ALIGNMENT][token_edges[0]]
+    evidence = synthetic_evidence()
+    assert torch.equal(
+        evidence.text_alignment.word_ids[src_samples, src_local],
+        evidence.text_context.word_ids[src_samples, dst_local],
+    )
 
 
 def test_hypothesis_support_and_feedback_relations() -> None:

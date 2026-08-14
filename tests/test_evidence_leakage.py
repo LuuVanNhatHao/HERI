@@ -12,6 +12,7 @@ def test_evidence_extraction_is_target_independent_in_eval_mode() -> None:
     features = synthetic_features()
     clean_batch = synthetic_batch()
     changed_targets = synthetic_batch()
+    changed_targets["image"] = clean_batch["image"].clone()
     changed_targets["binary_target"] = 1 - changed_targets["binary_target"]
     changed_targets["atomic_target"] = 1 - changed_targets["atomic_target"]
     changed_targets["fake_image_box_target"] = changed_targets["fake_image_box_target"] + 77.0

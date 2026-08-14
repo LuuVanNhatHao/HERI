@@ -142,7 +142,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     bundle = run_inference(
         model=model,
         loader=loader,
-        loss_fn=HERAMultitaskLoss(config["loss"]),
+        loss_fn=HERAMultitaskLoss(config["loss"], routing_config=config["routing"]),
         device=device,
         precision=precision,
         max_batches=config["runtime"].get("max_test_batches"),

@@ -143,7 +143,7 @@ graph:
       k: 4
       bidirectional: true
     text_alignment_text_context:
-      method: full_bipartite
+      method: word_aligned
       bidirectional: true
     semantic_to_hypotheses:
       enabled: true
@@ -194,7 +194,7 @@ dataloader:
 runtime:
   device: cuda
   precision: bf16
-  model_dtype: bf16
+  model_dtype: fp32
   attn_implementation:
 
 inspection:

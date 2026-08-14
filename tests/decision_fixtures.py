@@ -108,6 +108,7 @@ def full_text_graph_output(
         features=features,
         mask=mask,
         source_indices=source_indices,
+        selection_scores=None,
         word_ids=word_ids,
         full_features=full_features,
         full_mask=full_mask,

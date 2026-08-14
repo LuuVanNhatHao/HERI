@@ -33,11 +33,15 @@ class VisualSemanticEvidenceExtractor(nn.Module):
             patch_grid=siglip2.image_grid,
             context="visual_semantic",
         )
+        masked_tokens = image_tokens.masked_fill(~mask.unsqueeze(-1), 0.0)
+        center = masked_tokens.sum(dim=1, keepdim=True) / mask.sum(dim=1, keepdim=True).clamp_min(1).unsqueeze(-1)
+        semantic_importance = torch.linalg.vector_norm(image_tokens - center, dim=-1).masked_fill(~mask, 0.0)
         budgeted = budget_features(
             features=image_tokens,
             valid_mask=mask,
             max_nodes=self.max_nodes,
             strategy=self.budgeting,
+            selection_scores=semantic_importance,
         )
         projected = self.projector(budgeted.features)
         centers, boxes, norm_centers, norm_boxes = patch_centers_and_boxes(
@@ -50,6 +54,7 @@ class VisualSemanticEvidenceExtractor(nn.Module):
             features=projected,
             mask=budgeted.mask,
             source_indices=budgeted.source_indices,
+            selection_scores=budgeted.selection_scores,
             spatial_centers=gather_spatial(centers, budgeted.source_indices),
             spatial_boxes=gather_spatial(boxes, budgeted.source_indices),
             normalized_centers=gather_spatial(norm_centers, budgeted.source_indices),

@@ -14,5 +14,8 @@ def test_tiny_face_uses_nearest_patch_without_target() -> None:
         candidate_boxes=boxes,
         candidate_mask=mask,
     )
-    assert pooled.shape == (1, 1, 3)
-    assert torch.equal(pooled[0, 0], patch_tokens[0, 0])
+    assert pooled.shape == (1, 1, 9)
+    expected = torch.cat(
+        [patch_tokens[0, 0], patch_tokens[0, 0], torch.zeros_like(patch_tokens[0, 0])]
+    )
+    assert torch.equal(pooled[0, 0], expected)

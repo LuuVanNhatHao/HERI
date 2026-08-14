@@ -21,6 +21,7 @@ class GraphBatch:
     node_sample_indices: dict[str, torch.Tensor]
     node_local_indices: dict[str, torch.Tensor]
     edge_sample_indices: dict[EdgeType, torch.Tensor]
+    edge_attr_dict: dict[EdgeType, torch.Tensor]
     batch_size: int
     hidden_dim: int
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -66,6 +67,11 @@ class GraphBatch:
                     raise ValueError(f"{edge_type} contains cross-sample edges")
                 if not torch.equal(src_samples, edge_samples):
                     raise ValueError(f"{edge_type} edge sample metadata mismatch")
+            edge_attr = self.edge_attr_dict.get(edge_type)
+            if edge_attr is None or edge_attr.shape != (edge_index.shape[1], 2):
+                raise ValueError(f"{edge_type} edge_attr must be [E,2]")
+            if not torch.isfinite(edge_attr).all():
+                raise FloatingPointError(f"{edge_type} edge_attr contains non-finite values")
 
         hypothesis_nodes = self.x_dict[HYPOTHESIS]
         if hypothesis_nodes.shape[0] != self.batch_size * len(HYPOTHESIS_ORDER):

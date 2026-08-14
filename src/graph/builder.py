@@ -12,11 +12,11 @@ from src.evidence.outputs import EvidenceSet, HeterogeneousEvidenceBatch
 from .edges import (
     LocalEdgePairs,
     evidence_to_hypothesis_pairs,
-    full_bipartite_pairs,
     hypothesis_to_evidence_pairs,
     reverse_pairs,
     similarity_topk_pairs,
     spatial_knn_pairs,
+    word_aligned_pairs,
 )
 from .outputs import GraphBatch
 from .schema import (
@@ -83,13 +83,16 @@ class HypothesisEvidenceGraphBuilder:
             TEXT_CONTEXT: _evidence_store(evidence.text_context, hidden_dim=self.hidden_dim),
             HYPOTHESIS: _hypothesis_store(hypothesis_features),
         }
-        edge_index_dict, edge_sample_indices = self._build_edges(evidence=evidence, stores=stores)
+        edge_index_dict, edge_sample_indices, edge_attr_dict = self._build_edges(
+            evidence=evidence, stores=stores
+        )
         graph = GraphBatch(
             x_dict={node_type: store.features for node_type, store in stores.items()},
             edge_index_dict=edge_index_dict,
             node_sample_indices={node_type: store.sample_indices for node_type, store in stores.items()},
             node_local_indices={node_type: store.local_indices for node_type, store in stores.items()},
             edge_sample_indices=edge_sample_indices,
+            edge_attr_dict=edge_attr_dict,
             batch_size=batch_size,
             hidden_dim=self.hidden_dim,
             metadata={
@@ -105,7 +108,11 @@ class HypothesisEvidenceGraphBuilder:
         *,
         evidence: HeterogeneousEvidenceBatch,
         stores: Mapping[str, _NodeStore],
-    ) -> tuple[dict[EdgeType, torch.Tensor], dict[EdgeType, torch.Tensor]]:
+    ) -> tuple[
+        dict[EdgeType, torch.Tensor],
+        dict[EdgeType, torch.Tensor],
+        dict[EdgeType, torch.Tensor],
+    ]:
         device = evidence.visual_semantic.features.device
         edge_index_dict = {
             edge_type: torch.empty((2, 0), dtype=torch.long, device=device)
@@ -115,6 +122,7 @@ class HypothesisEvidenceGraphBuilder:
             edge_type: torch.empty(0, dtype=torch.long, device=device)
             for edge_type in CANONICAL_EDGE_TYPES
         }
+        edge_attr_dict: dict[EdgeType, torch.Tensor] = {}
 
         vs_vf = self.edge_config["visual_semantic_visual_forensic"]
         pairs = spatial_knn_pairs(
@@ -148,26 +156,38 @@ class HypothesisEvidenceGraphBuilder:
             src_mask=evidence.visual_semantic.mask,
             dst_mask=evidence.text_alignment.mask,
             k=int(vs_ta["k"]),
+            confidence=evidence.cross_modal_metadata.edge_confidence,
         )
+        forward_semantic_type = (VISUAL_SEMANTIC, SEMANTIC_ALIGNS, TEXT_ALIGNMENT)
         self._add_pairs(
             edge_index_dict,
             edge_sample_indices,
             stores,
-            edge_type=(VISUAL_SEMANTIC, SEMANTIC_ALIGNS, TEXT_ALIGNMENT),
+            edge_type=forward_semantic_type,
             pairs=pairs,
         )
+        edge_attr_dict[forward_semantic_type] = _pair_attributes(pairs, stores, forward_semantic_type)
         if bool(vs_ta.get("bidirectional", True)):
+            reverse_semantic_type = (TEXT_ALIGNMENT, SEMANTIC_ALIGNS, VISUAL_SEMANTIC)
+            reversed_pairs = reverse_pairs(pairs)
             self._add_pairs(
                 edge_index_dict,
                 edge_sample_indices,
                 stores,
-                edge_type=(TEXT_ALIGNMENT, SEMANTIC_ALIGNS, VISUAL_SEMANTIC),
-                pairs=reverse_pairs(pairs),
+                edge_type=reverse_semantic_type,
+                pairs=reversed_pairs,
+            )
+            edge_attr_dict[reverse_semantic_type] = _pair_attributes(
+                reversed_pairs, stores, reverse_semantic_type
             )
 
         ta_tc = self.edge_config["text_alignment_text_context"]
-        pairs = full_bipartite_pairs(
+        if evidence.text_alignment.word_ids is None or evidence.text_context.word_ids is None:
+            raise ValueError("word-aligned text edges require word_ids for both tokenizer families")
+        pairs = word_aligned_pairs(
+            src_word_ids=evidence.text_alignment.word_ids,
             src_mask=evidence.text_alignment.mask,
+            dst_word_ids=evidence.text_context.word_ids,
             dst_mask=evidence.text_context.mask,
         )
         self._add_pairs(
@@ -189,7 +209,14 @@ class HypothesisEvidenceGraphBuilder:
         self._add_evidence_support_edges(edge_index_dict, edge_sample_indices, evidence, stores)
         if self.feedback_enabled and bool(self.edge_config.get("feedback", {}).get("enabled", True)):
             self._add_feedback_edges(edge_index_dict, edge_sample_indices, evidence, stores)
-        return edge_index_dict, edge_sample_indices
+        for edge_type in CANONICAL_EDGE_TYPES:
+            edge_attr_dict.setdefault(
+                edge_type,
+                evidence.visual_semantic.features.new_zeros(
+                    (edge_index_dict[edge_type].shape[1], 2)
+                ),
+            )
+        return edge_index_dict, edge_sample_indices, edge_attr_dict
 
     def _add_evidence_support_edges(
         self,
@@ -370,7 +397,7 @@ def _validate_edge_config(edge_config: Mapping[str, Any]) -> None:
     expected_methods = {
         "visual_semantic_visual_forensic": "spatial_knn",
         "visual_semantic_text_alignment": "similarity_topk",
-        "text_alignment_text_context": "full_bipartite",
+        "text_alignment_text_context": "word_aligned",
     }
     for key, expected_method in expected_methods.items():
         if key not in edge_config:
@@ -381,3 +408,26 @@ def _validate_edge_config(edge_config: Mapping[str, Any]) -> None:
     for key in ("visual_semantic_visual_forensic", "visual_semantic_text_alignment"):
         if int(edge_config[key].get("k", 0)) <= 0:
             raise ValueError(f"{key}.k must be positive")
+
+
+def _pair_attributes(
+    pairs: LocalEdgePairs,
+    stores: Mapping[str, _NodeStore],
+    edge_type: EdgeType,
+) -> torch.Tensor:
+    """Flatten continuous similarity/confidence in the same order as edge indices."""
+
+    src_type, _, dst_type = edge_type
+    src_global = stores[src_type].lookup[pairs.samples, pairs.src_local]
+    dst_global = stores[dst_type].lookup[pairs.samples, pairs.dst_local]
+    valid = (src_global >= 0) & (dst_global >= 0)
+    if pairs.strengths is None:
+        return stores[src_type].features.new_zeros((int(valid.sum().item()), 2))
+    confidence = (
+        torch.ones_like(pairs.strengths)
+        if pairs.confidences is None
+        else pairs.confidences
+    )
+    return torch.stack([pairs.strengths[valid], confidence[valid]], dim=-1).to(
+        dtype=stores[src_type].features.dtype
+    )

@@ -82,7 +82,7 @@ def pool_candidate_patches(
         device=patch_tokens.device,
         dtype=patch_tokens.dtype,
     )
-    pooled = patch_tokens.new_zeros((batch, candidate_boxes.shape[1], channels))
+    pooled = patch_tokens.new_zeros((batch, candidate_boxes.shape[1], channels * 3))
     for b_idx in range(batch):
         for f_idx in range(candidate_boxes.shape[1]):
             if not bool(candidate_mask[b_idx, f_idx]):
@@ -96,11 +96,20 @@ def pool_candidate_patches(
                 & (centers[:, 1] <= y2)
             )
             if inside.any():
-                pooled[b_idx, f_idx] = patch_tokens[b_idx, inside].mean(dim=0)
+                selected = patch_tokens[b_idx, inside]
+                pooled[b_idx, f_idx] = torch.cat(
+                    [
+                        selected.mean(dim=0),
+                        selected.max(dim=0).values,
+                        selected.float().std(dim=0, unbiased=False).to(selected.dtype),
+                    ],
+                    dim=0,
+                )
             else:
                 center = torch.stack([(x1 + x2) * 0.5, (y1 + y2) * 0.5])
                 nearest = torch.argmin(torch.sum((centers - center.unsqueeze(0)) ** 2, dim=1))
-                pooled[b_idx, f_idx] = patch_tokens[b_idx, nearest]
+                selected = patch_tokens[b_idx, nearest]
+                pooled[b_idx, f_idx] = torch.cat([selected, selected, torch.zeros_like(selected)], dim=0)
     return pooled
 
 

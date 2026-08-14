@@ -9,7 +9,14 @@ from torch import nn
 
 from src.compat.transformers_compat import load_auto_model
 
-from .common import freeze_module, infer_square_grid, masked_mean, normalize_image_tensor, unfreeze_last_blocks
+from .common import (
+    freeze_module,
+    infer_square_grid,
+    masked_mean,
+    normalize_image_tensor,
+    pixel_mask_to_patch_mask,
+    unfreeze_last_blocks,
+)
 from ..outputs import DINOv3Output, PatchGrid
 
 
@@ -62,7 +69,7 @@ class DINOv3Encoder(nn.Module):
 
         return unfreeze_last_blocks(self.model, count, stage_name="DINOv3")
 
-    def forward(self, *, image: torch.Tensor) -> DINOv3Output:
+    def forward(self, *, image: torch.Tensor, pixel_mask: torch.Tensor | None = None) -> DINOv3Output:
         """Encode Phase-1 letterboxed images into patch and global features."""
 
         pixel_values = normalize_image_tensor(
@@ -80,14 +87,20 @@ class DINOv3Encoder(nn.Module):
 
         patch_tokens, grid_h, grid_w, special_token_count = _validated_patch_tokens(tokens)
 
-        patch_mask = torch.ones(
-            patch_tokens.shape[:2],
-            dtype=torch.bool,
+        patch_mask = pixel_mask_to_patch_mask(
+            pixel_mask,
+            grid_height=grid_h,
+            grid_width=grid_w,
+            batch_size=patch_tokens.shape[0],
             device=patch_tokens.device,
         )
         global_feature = _extract_optional_tensor(outputs, "pooler_output")
         if global_feature is None:
-            global_feature = tokens[:, 0, :] if patch_tokens.shape[1] != tokens.shape[1] else masked_mean(tokens, None)
+            global_feature = (
+                tokens[:, 0, :]
+                if patch_tokens.shape[1] != tokens.shape[1]
+                else masked_mean(patch_tokens, patch_mask)
+            )
         return DINOv3Output(
             patch_tokens=patch_tokens,
             patch_mask=patch_mask,

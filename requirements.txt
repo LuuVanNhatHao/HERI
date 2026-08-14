@@ -1,7 +1,7 @@
 torch>=2.2
 torchvision>=0.17
 torch-geometric>=2.5
-transformers>=4.40,<5.0
+transformers>=4.57.2,<5.0
 huggingface-hub>=0.34,<1.0
 tokenizers>=0.15
 tiktoken>=0.7

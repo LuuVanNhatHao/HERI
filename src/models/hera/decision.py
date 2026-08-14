@@ -87,6 +87,13 @@ class HERADecisionModule(nn.Module):
             hypothesis_features=graph_output.hypothesis_features,
             text_context=graph_output.refined_text_context,
         )
+        evidence_support = torch.cat(
+            [
+                _absolute_grounding_support(image_logits, image_mask),
+                _absolute_grounding_support(text_logits, text_mask),
+            ],
+            dim=1,
+        )
         output = HERADecisionOutput(
             atomic_logits=atomic_logits,
             atomic_probabilities=noisy_or_output.atomic_probabilities,
@@ -108,6 +115,7 @@ class HERADecisionModule(nn.Module):
                 "binary_aggregation": "noisy_or",
                 "binary_shortcut": False,
             },
+            evidence_support=evidence_support,
         )
         output.validate()
         return output
@@ -121,3 +129,16 @@ class HERADecisionModule(nn.Module):
         """Return trainable non-backbone modules for future optimizer grouping."""
 
         return [self.attribution_head, self.image_grounding_head, self.text_grounding_head]
+
+
+def _absolute_grounding_support(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Return absolute (non-softmax) local support for two hypotheses."""
+
+    if logits.ndim != 3 or logits.shape[1] != 2:
+        raise ValueError("grounding logits must be [B,2,N]")
+    if mask.shape != (logits.shape[0], logits.shape[2]):
+        raise ValueError("grounding mask must be [B,N]")
+    if logits.shape[-1] == 0:
+        return logits.new_zeros((logits.shape[0], 2))
+    probabilities = torch.sigmoid(logits).masked_fill(~mask.unsqueeze(1), 0.0)
+    return probabilities.max(dim=-1).values

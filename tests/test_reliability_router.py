@@ -56,3 +56,17 @@ def test_router_eval_is_deterministic() -> None:
     second = router(evidence)
     for family in first.families():
         assert torch.equal(first.families()[family].reliability_logits, second.families()[family].reliability_logits)
+
+
+def test_enabled_router_regularization_is_finite_and_nonzero() -> None:
+    config = routing_config(hidden_dim=12)
+    config["routing"]["regularization"] = {
+        "enabled": True,
+        "weight": 0.05,
+        "target_mean": 0.75,
+        "min_std": 0.05,
+    }
+    routed = EvidenceReliabilityRouter(config)(synthetic_evidence(hidden_dim=12))
+    assert routed.regularization_loss is not None
+    assert torch.isfinite(routed.regularization_loss)
+    assert routed.regularization_loss.item() > 0

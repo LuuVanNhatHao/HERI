@@ -9,7 +9,14 @@ from torch import nn
 
 from src.compat.transformers_compat import load_auto_model, load_auto_tokenizer
 
-from .common import freeze_module, infer_square_grid, masked_mean, normalize_image_tensor, unfreeze_last_blocks
+from .common import (
+    freeze_module,
+    infer_square_grid,
+    masked_mean,
+    normalize_image_tensor,
+    pixel_mask_to_patch_mask,
+    unfreeze_last_blocks,
+)
 from ..outputs import PatchGrid, SigLIP2Output
 
 
@@ -56,6 +63,7 @@ class SigLIP2Encoder(nn.Module):
             revision=revision,
             local_files_only=bool(config.get("local_files_only", False)),
             trust_remote_code=bool(config.get("trust_remote_code", False)),
+            use_fast=True,
         )
         return cls(
             model=model,
@@ -93,6 +101,8 @@ class SigLIP2Encoder(nn.Module):
         *,
         image: torch.Tensor,
         texts: list[str],
+        words: list[list[str]] | None = None,
+        pixel_mask: torch.Tensor | None = None,
     ) -> SigLIP2Output:
         """Encode Phase-1 letterboxed images and raw texts."""
 
@@ -101,7 +111,20 @@ class SigLIP2Encoder(nn.Module):
             mean=self.image_mean,
             std=self.image_std,
         )
-        text_inputs = self.tokenize_texts(texts, device=image.device)
+        text_encoding = self.tokenizer(
+            words if words is not None else texts,
+            is_split_into_words=True if words is not None else False,
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        text_word_ids = _batch_word_ids(text_encoding, batch_size=len(texts), device=image.device)
+        text_inputs = {
+            key: value.to(image.device)
+            for key, value in text_encoding.items()
+            if isinstance(value, torch.Tensor)
+        }
         try:
             outputs = self.model(
                 pixel_values=pixel_values,
@@ -129,15 +152,17 @@ class SigLIP2Encoder(nn.Module):
             text_mask = torch.ones(text_tokens.shape[:2], dtype=torch.bool, device=text_tokens.device)
         else:
             text_mask = text_mask.to(torch.bool)
-        if image_global is None:
-            image_global = masked_mean(image_tokens, None)
-        if text_global is None:
-            text_global = masked_mean(text_tokens, text_mask)
-        image_mask = torch.ones(
-            image_tokens.shape[:2],
-            dtype=torch.bool,
+        image_mask = pixel_mask_to_patch_mask(
+            pixel_mask,
+            grid_height=image_grid.height,
+            grid_width=image_grid.width,
+            batch_size=image_tokens.shape[0],
             device=image_tokens.device,
         )
+        if image_global is None:
+            image_global = masked_mean(image_tokens, image_mask)
+        if text_global is None:
+            text_global = masked_mean(text_tokens, text_mask)
         return SigLIP2Output(
             image_tokens=image_tokens,
             image_mask=image_mask,
@@ -147,7 +172,25 @@ class SigLIP2Encoder(nn.Module):
             text_global=text_global,
             image_grid=image_grid,
             image_special_token_count=image_special_token_count,
+            text_word_ids=text_word_ids,
         )
+
+
+def _batch_word_ids(encoding: Any, *, batch_size: int, device: torch.device) -> torch.Tensor | None:
+    """Extract fast-tokenizer word IDs without depending on supervision labels."""
+
+    if not hasattr(encoding, "word_ids"):
+        return None
+    rows: list[list[int]] = []
+    for batch_index in range(batch_size):
+        try:
+            values = encoding.word_ids(batch_index=batch_index)
+        except TypeError:
+            if batch_size != 1:
+                return None
+            values = encoding.word_ids()
+        rows.append([-1 if value is None else int(value) for value in values])
+    return torch.tensor(rows, dtype=torch.long, device=device)
 
 
 def _extract_optional_tensor(outputs: Any, name: str) -> torch.Tensor | None:

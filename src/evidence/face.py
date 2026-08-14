@@ -14,7 +14,7 @@ from .spatial import gather_batched, normalize_boxes
 
 
 class FaceEvidenceExtractor(nn.Module):
-    """Pool DINOv3 features under legal MTCNN candidate boxes."""
+    """Pool face patches while retaining mean, peak, and local variation."""
 
     def __init__(
         self,
@@ -102,9 +102,10 @@ class FaceEvidenceExtractor(nn.Module):
                 dtype=torch.long,
             ).unsqueeze(0).expand(pooled.shape[0], -1),
             provenance={
-                "source": "mtcnn_boxes + dinov3.patch_tokens",
+                "source": "mtcnn_boxes + dinov3.patch_tokens(mean,max,std)",
                 "geometry_frame": "transformed_384",
                 "truncate": self.truncate,
                 "tiny_face_fallback": "nearest_patch_center",
+                "pooling": "mean_max_std",
             },
         )

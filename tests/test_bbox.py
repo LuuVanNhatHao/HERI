@@ -1,7 +1,7 @@
 import pytest
 
 from src.data.bbox import BBoxError, best_iou_match, iou, transform_box, validate_box
-from src.data.transforms import compute_resize_padding
+from src.data.transforms import compute_resize_padding, image_content_mask
 
 
 def test_validate_and_iou_identity() -> None:
@@ -17,6 +17,10 @@ def test_resize_padding_transform() -> None:
     assert meta.pad_top == 96
     transformed = transform_box([10, 10, 30, 30], scale=meta.scale, pad_left=meta.pad_left, pad_top=meta.pad_top)
     assert transformed == pytest.approx((38.4, 134.4, 115.2, 211.2))
+    mask = image_content_mask(meta)
+    assert mask.shape == (384, 384)
+    assert mask.sum().item() == 384 * 192
+    assert not mask[:96].any()
 
 
 def test_best_iou_match() -> None:

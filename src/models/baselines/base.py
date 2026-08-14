@@ -32,9 +32,15 @@ class BaselineBackboneMixin:
                 "BackboneOutputs must be provided unless real pretrained encoders are attached"
             )
         image = batch["image"]
+        pixel_mask = batch.get("image_content_mask")
         return BackboneOutputs(
-            siglip2=self.siglip2(image=image, texts=list(batch["text"])),
-            dinov3=self.dinov3(image=image),
+            siglip2=self.siglip2(
+                image=image,
+                texts=list(batch["text"]),
+                words=list(batch["words"]) if "words" in batch else None,
+                pixel_mask=pixel_mask,
+            ),
+            dinov3=self.dinov3(image=image, pixel_mask=pixel_mask),
             deberta=self.deberta(
                 input_ids=batch["text_input_ids"],
                 attention_mask=batch["text_attention_mask"],

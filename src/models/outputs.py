@@ -30,6 +30,7 @@ class SigLIP2Output:
     text_global: torch.Tensor
     image_grid: PatchGrid | None = None
     image_special_token_count: int = 0
+    text_word_ids: torch.Tensor | None = None
 
 
 @dataclass

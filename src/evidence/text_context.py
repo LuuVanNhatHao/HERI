@@ -52,6 +52,7 @@ class TextContextEvidenceExtractor(nn.Module):
             valid_mask=evidence_mask,
             max_nodes=self.max_nodes,
             strategy=self.budgeting,
+            selection_scores=_context_importance(deberta.token_features, evidence_mask),
         )
         selected_word_ids = gather_batched(text_word_ids.unsqueeze(-1).to(deberta.token_features.dtype), budgeted.source_indices)
         selected_word_ids = selected_word_ids.squeeze(-1).to(torch.long)
@@ -61,6 +62,7 @@ class TextContextEvidenceExtractor(nn.Module):
             features=projected,
             mask=budgeted.mask,
             source_indices=budgeted.source_indices,
+            selection_scores=budgeted.selection_scores,
             word_ids=selected_word_ids.masked_fill(~budgeted.mask, PAD_WORD_ID),
             full_features=deberta.token_features,
             full_mask=attention_mask,
@@ -77,3 +79,9 @@ class TextContextEvidenceExtractor(nn.Module):
                 "fake_text_pos_used": False,
             },
         )
+
+
+def _context_importance(features: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    masked = features.masked_fill(~mask.unsqueeze(-1), 0.0)
+    center = masked.sum(dim=1, keepdim=True) / mask.sum(dim=1, keepdim=True).clamp_min(1).unsqueeze(-1)
+    return torch.linalg.vector_norm(features - center, dim=-1).masked_fill(~mask, 0.0)

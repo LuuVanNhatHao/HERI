@@ -61,7 +61,7 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         x_dict = dict(graph.x_dict)
         intermediate: list[torch.Tensor] = []
         for _ in range(self.cycles):
-            x_dict = self.hgt(x_dict, graph.edge_index_dict)
+            x_dict = self.hgt(x_dict, graph.edge_index_dict, graph.edge_attr_dict)
             intermediate.append(_unflatten_hypotheses(x_dict[HYPOTHESIS], batch_size=batch_size))
         hypothesis_features = intermediate[-1]
         output = HypothesisGraphOutput(

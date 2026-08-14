@@ -84,6 +84,18 @@ def preprocess_image(
     return tensor, meta
 
 
+def image_content_mask(meta: ImageTransformMeta) -> torch.Tensor:
+    """Return the valid (non-letterbox) pixels for a transformed image."""
+
+    mask = torch.zeros((meta.target_height, meta.target_width), dtype=torch.bool)
+    y1 = meta.pad_top
+    y2 = meta.pad_top + meta.resized_height
+    x1 = meta.pad_left
+    x2 = meta.pad_left + meta.resized_width
+    mask[y1:y2, x1:x2] = True
+    return mask
+
+
 def transform_box_with_meta(box: Sequence[float | int], meta: ImageTransformMeta) -> Box:
     """Transform one original-coordinate box with image transform metadata."""
 

@@ -21,7 +21,13 @@ from src.training.hera_trainer import (
     _resolve_hera_resume_checkpoint,
     apply_configured_gradient_checkpointing,
 )
-from src.training.optimizer import apply_training_stage, create_optimizer, parameter_accounting
+from src.training.optimizer import (
+    apply_training_stage,
+    create_optimizer,
+    migrate_optimizer_state,
+    parameter_accounting,
+)
+from src.training.state import TrainingState
 
 
 def _stage_model() -> HERADGM:
@@ -78,6 +84,31 @@ def test_hera_stage_b_partial_unfreezes_backbone_optimizer_groups_and_audit_keys
     assert audit["attribution_head"]["trainable"] > 0
     assert audit["image_grounding"]["trainable"] > 0
     assert audit["text_grounding"]["trainable"] > 0
+
+
+def test_stage_b_optimizer_rebuild_preserves_stage_a_adam_state() -> None:
+    model = _stage_model()
+    model(synthetic_batch(), features=synthetic_features())
+    cfg = hera_test_config()
+    apply_training_stage(model, cfg, epoch=1)
+    stage_a, _ = create_optimizer(model, cfg)
+    for group in stage_a.param_groups:
+        for parameter in group["params"]:
+            parameter.grad = torch.ones_like(parameter)
+    stage_a.step()
+    common_parameter = stage_a.param_groups[0]["params"][0]
+    expected_exp_avg = stage_a.state[common_parameter]["exp_avg"].clone()
+
+    apply_training_stage(model, cfg, epoch=2)
+    stage_b, _ = create_optimizer(model, cfg)
+    migrated = migrate_optimizer_state(stage_a, stage_b)
+
+    assert migrated > 0
+    assert common_parameter in stage_b.state
+    assert torch.equal(stage_b.state[common_parameter]["exp_avg"], expected_exp_avg)
+    assert {group["name"] for group in stage_b.param_groups} >= {
+        "new_hera_modules", "siglip2", "dinov3", "deberta"
+    }
 
 
 def test_gradient_checkpointing_skips_frozen_stage_a_backbones_and_reenables_stage_b() -> None:
@@ -173,6 +204,33 @@ def test_hera_early_stopping_improvement_respects_mode_and_delta() -> None:
 def test_hera_early_stopping_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError, match="Unsupported early stopping mode"):
         _early_stopping_improved(current=0.8, best=0.7, mode="sideways", min_delta=0.0)
+
+
+def test_early_stopping_waits_for_stage_b_grace_epochs() -> None:
+    trainer = HERATrainer.__new__(HERATrainer)
+    trainer.config = {
+        "training": {
+            "stages": {"stage_a_freeze_epochs": 1},
+            "early_stopping": {
+                "enabled": True,
+                "metric": "cf1",
+                "mode": "max",
+                "patience": 1,
+                "min_delta": 0.001,
+                "minimum_stage_b_epochs": 2,
+            },
+        }
+    }
+    trainer.state = TrainingState()
+    trainer.state.epoch = 1
+    assert not trainer._update_early_stopping({"cf1": 0.8})
+    trainer.state.epoch = 2
+    assert not trainer._update_early_stopping({"cf1": 0.7})
+    trainer.state.epoch = 3
+    assert not trainer._update_early_stopping({"cf1": 0.6})
+    assert trainer.state.early_stopping_bad_epochs == 0
+    trainer.state.epoch = 4
+    assert trainer._update_early_stopping({"cf1": 0.5})
 
 
 def test_legacy_early_stopping_state_is_recovered_from_history(tmp_path: Path) -> None:

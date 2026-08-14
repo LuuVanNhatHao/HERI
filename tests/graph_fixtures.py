@@ -30,7 +30,7 @@ def graph_config(hidden_dim: int = 12, *, cycles: int = 1, feedback: bool = True
                 "bidirectional": True,
             },
             "text_alignment_text_context": {
-                "method": "full_bipartite",
+                "method": "word_aligned",
                 "bidirectional": True,
             },
             "semantic_to_hypotheses": {"enabled": True},

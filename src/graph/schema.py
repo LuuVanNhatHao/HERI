@@ -30,7 +30,7 @@ HYPOTHESIS_ORDER: tuple[str, ...] = ("FS", "FA", "TS", "TA")
 HYPOTHESIS_TO_INDEX: dict[str, int] = {name: index for index, name in enumerate(HYPOTHESIS_ORDER)}
 
 SPATIAL_CORRESPONDS = "spatial_corresponds"
-SEMANTIC_ALIGNS = "semantic_aligns"
+SEMANTIC_ALIGNS = "semantic_compares"
 TOKEN_CONTEXTUALIZES = "token_contextualizes"
 SUPPORTS_FS = "supports_fs"
 SUPPORTS_FA = "supports_fa"
@@ -73,7 +73,7 @@ CANONICAL_EDGE_TYPES: tuple[EdgeType, ...] = (
 SUPPORTED_EDGE_CONFIGS = {
     "visual_semantic_visual_forensic": {"spatial_knn"},
     "visual_semantic_text_alignment": {"similarity_topk"},
-    "text_alignment_text_context": {"full_bipartite"},
+    "text_alignment_text_context": {"word_aligned"},
 }
 
 

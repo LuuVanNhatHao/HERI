@@ -24,6 +24,7 @@ from .paths import resolve_image_path
 from .schema import validate_row, validate_text_positions
 from .tokenizer_alignment import align_word_positions_to_subwords
 from .transforms import (
+    image_content_mask,
     preprocess_image,
     transform_box_with_meta,
     transform_boxes_with_meta,
@@ -209,6 +210,7 @@ class DGM4Dataset(Dataset[dict[str, Any]]):
             "id": row["id"],
             "split": self.split,
             "image": image_tensor,
+            "image_content_mask": image_content_mask(transform_meta),
             "image_path": str(resolved.physical_path),
             "annotation_image_path": row["image"],
             "image_transform_meta": transform_meta.to_dict(),

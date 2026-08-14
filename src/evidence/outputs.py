@@ -128,7 +128,10 @@ class CrossModalMetadata:
     text_mask: torch.Tensor | None = None
     visual_source_indices: torch.Tensor | None = None
     text_source_indices: torch.Tensor | None = None
+    edge_confidence: torch.Tensor | None = None
+    alignment_loss: torch.Tensor | None = None
     method: str = "disabled"
+    feature_space: str = "disabled"
 
     def validate(self) -> None:
         """Validate similarity and mask alignment."""
@@ -147,6 +150,18 @@ class CrossModalMetadata:
         valid = self.visual_mask.unsqueeze(2) & self.text_mask.unsqueeze(1)
         if bool((self.similarity[~valid] != 0).any()):
             raise ValueError("cross_modal.similarity must be zero where either side is masked")
+        if self.edge_confidence is not None:
+            if self.edge_confidence.shape != self.similarity.shape:
+                raise ValueError("cross_modal.edge_confidence shape mismatch")
+            if not torch.isfinite(self.edge_confidence).all():
+                raise FloatingPointError("cross_modal.edge_confidence contains non-finite values")
+            if bool(((self.edge_confidence < 0) | (self.edge_confidence > 1)).any()):
+                raise ValueError("cross_modal.edge_confidence must be in [0,1]")
+            if bool((self.edge_confidence[~valid] != 0).any()):
+                raise ValueError("cross_modal.edge_confidence must be zero where either side is masked")
+        if self.alignment_loss is not None:
+            if self.alignment_loss.ndim != 0 or not torch.isfinite(self.alignment_loss):
+                raise ValueError("cross_modal.alignment_loss must be a finite scalar")
 
 
 @dataclass

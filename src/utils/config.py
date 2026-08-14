@@ -375,7 +375,7 @@ def validate_graph_config(config: Mapping[str, Any], *, mode: str) -> None:
     methods = {
         "graph.edges.visual_semantic_visual_forensic.method": "spatial_knn",
         "graph.edges.visual_semantic_text_alignment.method": "similarity_topk",
-        "graph.edges.text_alignment_text_context.method": "full_bipartite",
+        "graph.edges.text_alignment_text_context.method": "word_aligned",
     }
     for key, expected in methods.items():
         actual = str(require_key(config, key))
@@ -502,6 +502,13 @@ def validate_routing_config(config: Mapping[str, Any], *, mode: str) -> None:
         require_key(config, "routing.regularization.weight")
     ) <= 0:
         raise ConfigError("routing.regularization.weight must be positive when enabled")
+    if bool(require_key(config, "routing.regularization.enabled")):
+        target_mean = float(require_key(config, "routing.regularization.target_mean"))
+        min_std = float(require_key(config, "routing.regularization.min_std"))
+        if target_mean <= 0 or target_mean > 1:
+            raise ConfigError("routing.regularization.target_mean must be in (0,1]")
+        if min_std < 0 or min_std >= 0.5:
+            raise ConfigError("routing.regularization.min_std must be in [0,0.5)")
     if not bool(require_key(config, "routing.regularization.enabled")) and float(
         require_key(config, "routing.regularization.weight")
     ) != 0.0:
@@ -601,6 +608,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "loss.lambda_img",
         "loss.lambda_txt",
         "loss.lambda_ev",
+        "loss.lambda_align",
         "training.epochs",
         "training.micro_batch_size",
         "training.gradient_accumulation_steps",
@@ -612,6 +620,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "training.early_stopping.mode",
         "training.early_stopping.patience",
         "training.early_stopping.min_delta",
+        "training.early_stopping.minimum_stage_b_epochs",
         "training.stages.stage_a_freeze_epochs",
         "training.stages.stage_b_unfreeze_last_blocks.siglip2",
         "training.stages.stage_b_unfreeze_last_blocks.dinov3",
@@ -694,6 +703,8 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("training.early_stopping.patience must be non-negative")
     if float(require_key(config, "training.early_stopping.min_delta")) < 0:
         raise ConfigError("training.early_stopping.min_delta must be non-negative")
+    if int(require_key(config, "training.early_stopping.minimum_stage_b_epochs")) < 1:
+        raise ConfigError("training.early_stopping.minimum_stage_b_epochs must be positive")
     if str(require_key(config, "scheduler.resume_horizon_policy")) not in {
         "error",
         "continue_from_checkpoint_lr",
@@ -707,6 +718,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "loss.lambda_img",
         "loss.lambda_txt",
         "loss.lambda_ev",
+        "loss.lambda_align",
         "model.attribution.dropout",
         "model.grounding.image.dropout",
         "model.grounding.text.dropout",
@@ -817,6 +829,12 @@ def _validate_common_canonical_data_and_backbones(config: Mapping[str, Any], *, 
             raise ConfigError(f"{key} must be canonical value: {expected}")
     if bool(require_key(config, "tokenizer.enabled")) and not bool(require_key(config, "tokenizer.use_fast")):
         raise ConfigError("tokenizer.use_fast must be true when tokenizer.enabled is true")
+    precision = str(require_key(config, "runtime.precision")).lower()
+    model_dtype = str(require_key(config, "runtime.model_dtype")).lower()
+    if precision in {"bf16", "bfloat16", "fp16", "float16"} and model_dtype not in {"fp32", "float32"}:
+        raise ConfigError(
+            "runtime.model_dtype must be fp32 for AMP training/inference; runtime.precision controls autocast"
+        )
 
 
 def _is_explicit_evaluation_path(value: Any) -> bool:

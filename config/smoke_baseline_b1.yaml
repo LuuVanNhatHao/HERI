@@ -90,7 +90,7 @@ dataloader:
 runtime:
   device: cuda
   precision: bf16
-  model_dtype: bf16
+  model_dtype: fp32
   attn_implementation:
   max_train_batches: 2
   max_val_batches: 2
