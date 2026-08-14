@@ -620,12 +620,10 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "training.early_stopping.mode",
         "training.early_stopping.patience",
         "training.early_stopping.min_delta",
-        "training.early_stopping.minimum_stage_b_epochs",
+        "training.early_stopping.minimum_backbone_adaptation_epochs",
         "training.stages.stage_a_freeze_epochs",
-        "training.stages.stage_b_unfreeze_last_blocks.siglip2",
-        "training.stages.stage_b_unfreeze_last_blocks.dinov3",
-        "training.stages.stage_b_unfreeze_last_blocks.deberta",
-        "training.stages.stage_c_full_unfreeze.enabled",
+        "training.stages.stage_b_full_unfreeze.enabled",
+        "training.stages.stage_b_full_unfreeze.start_epoch",
         "optimizer.type",
         "optimizer.lr_new",
         "optimizer.lr_backbones.siglip2",
@@ -691,8 +689,16 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("model.binary.aggregation must be noisy_or")
     if not bool(require_key(config, "model.grounding.text.full_token_store")):
         raise ConfigError("model.grounding.text.full_token_store must be true")
-    if bool(require_key(config, "training.stages.stage_c_full_unfreeze.enabled")):
-        raise ConfigError("Stage C full-backbone adaptation is explicitly deferred in Phase 7 configs")
+    freeze_epochs = int(require_key(config, "training.stages.stage_a_freeze_epochs"))
+    full_unfreeze_enabled = bool(require_key(config, "training.stages.stage_b_full_unfreeze.enabled"))
+    full_unfreeze_start = int(require_key(config, "training.stages.stage_b_full_unfreeze.start_epoch"))
+    if not full_unfreeze_enabled:
+        raise ConfigError("Canonical HERA training requires full-backbone fine-tuning after warm-up")
+    if full_unfreeze_start != freeze_epochs + 1:
+        raise ConfigError(
+            "training.stages.stage_b_full_unfreeze.start_epoch must immediately follow "
+            "training.stages.stage_a_freeze_epochs"
+        )
     if int(require_key(config, "training.gradient_accumulation_steps")) <= 0:
         raise ConfigError("training.gradient_accumulation_steps must be positive")
     if int(require_key(config, "training.micro_batch_size")) != int(require_key(config, "dataloader.batch_size")):
@@ -703,8 +709,8 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("training.early_stopping.patience must be non-negative")
     if float(require_key(config, "training.early_stopping.min_delta")) < 0:
         raise ConfigError("training.early_stopping.min_delta must be non-negative")
-    if int(require_key(config, "training.early_stopping.minimum_stage_b_epochs")) < 1:
-        raise ConfigError("training.early_stopping.minimum_stage_b_epochs must be positive")
+    if int(require_key(config, "training.early_stopping.minimum_backbone_adaptation_epochs")) < 1:
+        raise ConfigError("training.early_stopping.minimum_backbone_adaptation_epochs must be positive")
     if str(require_key(config, "scheduler.resume_horizon_policy")) not in {
         "error",
         "continue_from_checkpoint_lr",

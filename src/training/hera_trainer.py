@@ -233,10 +233,12 @@ class HERATrainer:
                 previous_optimizer = optimizer
                 optimizer, group_summaries = create_optimizer(self.model, self.config)
                 if resume_payload is not None and resume_checkpoint_epoch is not None:
-                    crosses_stage_boundary = _stage_name(self.config, resume_checkpoint_epoch) != _stage_name(
+                    checkpoint_stage = _stage_name(self.config, resume_checkpoint_epoch)
+                    target_stage = _stage_name(
                         self.config,
                         epoch,
                     )
+                    crosses_stage_boundary = checkpoint_stage != target_stage
                     scheduler = self._restore_resume_checkpoint(
                         checkpoint=resume_payload,
                         optimizer=optimizer,
@@ -249,7 +251,10 @@ class HERATrainer:
                     self._restore_training_state(resume_payload)
                     self.state.epoch = epoch
                     if crosses_stage_boundary:
-                        tqdm.write("Resume crosses STAGE A -> STAGE B; optimizer was rebuilt for the new stage.")
+                        tqdm.write(
+                            f"Resume crosses STAGE {checkpoint_stage} -> STAGE {target_stage}; "
+                            "optimizer was rebuilt for the new stage."
+                        )
                     resume_payload = None
                     resume_path = None
                 elif previous_optimizer is not None:
@@ -452,11 +457,12 @@ class HERATrainer:
         self.gradient_checkpointing = apply_configured_gradient_checkpointing(self.model, self.config)
         if stage == "A":
             _assert_stage_a_backbones_frozen(self.model)
+        elif stage == "B":
+            _assert_stage_b_backbones_fully_trainable(self.model)
         self._active_stage = stage
 
     def _stage_changed_requires_optimizer_rebuild(self, epoch: int) -> bool:
-        freeze_epochs = int(self.config["training"]["stages"]["stage_a_freeze_epochs"])
-        return epoch == freeze_epochs + 1
+        return epoch > 1 and _stage_name(self.config, epoch) != _stage_name(self.config, epoch - 1)
 
     def _initialize_lazy_modules(self) -> None:
         """Run one real HERA forward pass before optimizer/count/checkpoint operations."""
@@ -752,10 +758,10 @@ class HERATrainer:
         if value is None:
             raise ValueError(f"Early stopping metric {metric!r} is missing from validation metrics")
         current = float(value)
-        freeze_epochs = int(self.config["training"]["stages"]["stage_a_freeze_epochs"])
-        stage_b_epoch = self.state.epoch - freeze_epochs
-        minimum_stage_b_epochs = int(settings["minimum_stage_b_epochs"])
-        if self.state.epoch <= freeze_epochs:
+        adaptation_start_epoch = _backbone_adaptation_start_epoch(self.config)
+        adaptation_epoch = self.state.epoch - adaptation_start_epoch + 1
+        minimum_adaptation_epochs = int(settings["minimum_backbone_adaptation_epochs"])
+        if self.state.epoch < adaptation_start_epoch:
             if _early_stopping_improved(
                 current=current,
                 best=self.state.early_stopping_best_metric,
@@ -765,7 +771,7 @@ class HERATrainer:
                 self.state.early_stopping_best_metric = current
             self.state.early_stopping_bad_epochs = 0
             return False
-        if stage_b_epoch == 1:
+        if adaptation_epoch == 1:
             self.state.early_stopping_best_metric = None
             self.state.early_stopping_bad_epochs = 0
         improved = _early_stopping_improved(
@@ -774,7 +780,7 @@ class HERATrainer:
             mode=str(settings["mode"]),
             min_delta=float(settings["min_delta"]),
         )
-        grace_active = stage_b_epoch <= minimum_stage_b_epochs
+        grace_active = adaptation_epoch <= minimum_adaptation_epochs
         if improved:
             self.state.early_stopping_best_metric = current
             self.state.early_stopping_bad_epochs = 0
@@ -883,8 +889,28 @@ def _has_trainable_parameters(module: nn.Module) -> bool:
 
 
 def _stage_name(config: Mapping[str, Any], epoch: int) -> str:
-    freeze_epochs = int(config["training"]["stages"]["stage_a_freeze_epochs"])
-    return "A" if int(epoch) <= freeze_epochs else "B"
+    stages = config["training"]["stages"]
+    freeze_epochs = int(stages["stage_a_freeze_epochs"])
+    epoch_int = int(epoch)
+    if epoch_int <= freeze_epochs:
+        return "A"
+    full_unfreeze = stages.get("stage_b_full_unfreeze", {})
+    if bool(full_unfreeze.get("enabled", False)):
+        start_epoch = int(full_unfreeze.get("start_epoch", freeze_epochs + 1))
+        if epoch_int >= start_epoch:
+            return "B"
+    return "B"
+
+
+def _backbone_adaptation_start_epoch(config: Mapping[str, Any]) -> int:
+    """Return the first epoch whose backbone policy should seed early stopping."""
+
+    stages = config["training"]["stages"]
+    freeze_epochs = int(stages["stage_a_freeze_epochs"])
+    full_unfreeze = stages.get("stage_b_full_unfreeze", {})
+    if bool(full_unfreeze.get("enabled", False)):
+        return int(full_unfreeze.get("start_epoch", freeze_epochs + 1))
+    return freeze_epochs + 1
 
 
 def _assert_stage_a_backbones_frozen(model: HERADGM) -> None:
@@ -892,6 +918,23 @@ def _assert_stage_a_backbones_frozen(model: HERADGM) -> None:
         trainable = sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad)
         if trainable:
             raise RuntimeError(f"Stage A must keep {name} frozen, but {trainable} parameters are trainable")
+
+
+def _assert_stage_b_backbones_fully_trainable(model: HERADGM) -> None:
+    """Fail fast if a nominal full-fine-tune stage leaves any backbone parameter frozen."""
+
+    backbones = model.backbone_modules()
+    expected = {"siglip2", "dinov3", "deberta"}
+    missing = expected.difference(backbones)
+    if missing:
+        raise RuntimeError(f"Stage B is missing required backbones: {sorted(missing)}")
+    for name, module in backbones.items():
+        total = sum(parameter.numel() for parameter in module.parameters())
+        trainable = sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad)
+        if total == 0 or trainable != total:
+            raise RuntimeError(
+                f"Stage B must fully fine-tune {name}, but only {trainable}/{total} parameters are trainable"
+            )
 
 
 def _selection_score_tuple(metrics: Mapping[str, Any], config: Mapping[str, Any]) -> tuple[float, ...]:
@@ -949,7 +992,7 @@ def _early_stopping_status(
         "mode": str(settings["mode"]),
         "patience": int(settings["patience"]),
         "min_delta": float(settings["min_delta"]),
-        "minimum_stage_b_epochs": int(settings["minimum_stage_b_epochs"]),
+        "minimum_backbone_adaptation_epochs": int(settings["minimum_backbone_adaptation_epochs"]),
         "current": float(metrics[metric]) if metric in metrics and metrics[metric] is not None else None,
         "best": state.early_stopping_best_metric,
         "bad_epochs": state.early_stopping_bad_epochs,

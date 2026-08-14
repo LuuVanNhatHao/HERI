@@ -17,6 +17,7 @@ from src.training.hera_trainer import (
     _cuda_memory_summary,
     _early_stopping_improved,
     _ensure_finite_losses,
+    _stage_name,
     _recover_early_stopping_state,
     _resolve_hera_resume_checkpoint,
     apply_configured_gradient_checkpointing,
@@ -66,7 +67,7 @@ def test_hera_stage_a_freezes_backbones_and_optimizer_has_new_hera_group() -> No
     assert [group.name for group in groups] == ["new_hera_modules"]
 
 
-def test_hera_stage_b_partial_unfreezes_backbone_optimizer_groups_and_audit_keys() -> None:
+def test_hera_stage_b_full_unfreezes_every_backbone_parameter_and_optimizer_groups() -> None:
     model = _stage_model()
     model(synthetic_batch(), features=synthetic_features())
 
@@ -76,6 +77,10 @@ def test_hera_stage_b_partial_unfreezes_backbone_optimizer_groups_and_audit_keys
     names = {group.name for group in groups}
     audit = parameter_accounting(model)
 
+    assert _stage_name(cfg, 2) == "B"
+    assert all(p.requires_grad for p in model.siglip2.parameters())
+    assert all(p.requires_grad for p in model.dinov3.parameters())
+    assert all(p.requires_grad for p in model.deberta.parameters())
     assert {"new_hera_modules", "siglip2", "dinov3", "deberta"} <= names
     assert audit["evidence_extractor"]["trainable"] > 0
     assert audit["router"]["trainable"] > 0
@@ -86,7 +91,7 @@ def test_hera_stage_b_partial_unfreezes_backbone_optimizer_groups_and_audit_keys
     assert audit["text_grounding"]["trainable"] > 0
 
 
-def test_stage_b_optimizer_rebuild_preserves_stage_a_adam_state() -> None:
+def test_full_finetune_optimizer_rebuild_preserves_stage_a_adam_state() -> None:
     model = _stage_model()
     model(synthetic_batch(), features=synthetic_features())
     cfg = hera_test_config()
@@ -100,18 +105,18 @@ def test_stage_b_optimizer_rebuild_preserves_stage_a_adam_state() -> None:
     expected_exp_avg = stage_a.state[common_parameter]["exp_avg"].clone()
 
     apply_training_stage(model, cfg, epoch=2)
-    stage_b, _ = create_optimizer(model, cfg)
-    migrated = migrate_optimizer_state(stage_a, stage_b)
+    full_finetune, _ = create_optimizer(model, cfg)
+    migrated = migrate_optimizer_state(stage_a, full_finetune)
 
     assert migrated > 0
-    assert common_parameter in stage_b.state
-    assert torch.equal(stage_b.state[common_parameter]["exp_avg"], expected_exp_avg)
-    assert {group["name"] for group in stage_b.param_groups} >= {
+    assert common_parameter in full_finetune.state
+    assert torch.equal(full_finetune.state[common_parameter]["exp_avg"], expected_exp_avg)
+    assert {group["name"] for group in full_finetune.param_groups} >= {
         "new_hera_modules", "siglip2", "dinov3", "deberta"
     }
 
 
-def test_gradient_checkpointing_skips_frozen_stage_a_backbones_and_reenables_stage_b() -> None:
+def test_gradient_checkpointing_skips_stage_a_and_enables_full_finetune_backbones() -> None:
     cfg = hera_test_config()
     cfg["runtime"] = {
         "gradient_checkpointing": {
@@ -206,18 +211,21 @@ def test_hera_early_stopping_rejects_unknown_mode() -> None:
         _early_stopping_improved(current=0.8, best=0.7, mode="sideways", min_delta=0.0)
 
 
-def test_early_stopping_waits_for_stage_b_grace_epochs() -> None:
+def test_early_stopping_waits_for_full_backbone_adaptation_grace_epochs() -> None:
     trainer = HERATrainer.__new__(HERATrainer)
     trainer.config = {
         "training": {
-            "stages": {"stage_a_freeze_epochs": 1},
+            "stages": {
+                "stage_a_freeze_epochs": 1,
+                "stage_b_full_unfreeze": {"enabled": True, "start_epoch": 2},
+            },
             "early_stopping": {
                 "enabled": True,
                 "metric": "cf1",
                 "mode": "max",
                 "patience": 1,
                 "min_delta": 0.001,
-                "minimum_stage_b_epochs": 2,
+                "minimum_backbone_adaptation_epochs": 2,
             },
         }
     }

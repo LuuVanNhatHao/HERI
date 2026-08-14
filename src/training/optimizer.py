@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.nn.parameter import UninitializedParameter
 
-from src.models.encoders.common import count_parameters, freeze_module
+from src.models.encoders.common import count_parameters, freeze_module, unfreeze_module
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class ParameterGroupSummary:
 
 
 def apply_training_stage(model: nn.Module, config: Mapping[str, Any], *, epoch: int) -> None:
-    """Apply Stage A freeze or Stage B partial unfreeze from YAML."""
+    """Apply frozen, optional partial, or full-backbone training from YAML."""
 
     stages = config["training"]["stages"]
     freeze_epochs = int(stages["stage_a_freeze_epochs"])
@@ -39,7 +39,19 @@ def apply_training_stage(model: nn.Module, config: Mapping[str, Any], *, epoch: 
             parameter.requires_grad = True
     if epoch <= freeze_epochs:
         return
-    unfreeze = stages["stage_b_unfreeze_last_blocks"]
+
+    full_unfreeze = stages.get("stage_b_full_unfreeze", {})
+    full_unfreeze_enabled = bool(full_unfreeze.get("enabled", False))
+    full_unfreeze_start = int(full_unfreeze.get("start_epoch", freeze_epochs + 1))
+    if full_unfreeze_enabled and epoch >= full_unfreeze_start:
+        for module in backbones.values():
+            if hasattr(module, "unfreeze_all"):
+                module.unfreeze_all()
+            else:
+                unfreeze_module(module)
+        return
+
+    unfreeze = stages.get("stage_b_unfreeze_last_blocks", {})
     for name, count in unfreeze.items():
         count_int = int(count)
         if count_int <= 0:
@@ -100,6 +112,7 @@ def create_optimizer(
             groups,
             betas=tuple(float(value) for value in opt_config.get("betas", [0.9, 0.999])),
             eps=float(opt_config.get("eps", 1e-8)),
+            foreach=bool(opt_config.get("foreach", False)),
         )
     else:
         raise ValueError(f"Unsupported optimizer type: {optimizer_type!r}")

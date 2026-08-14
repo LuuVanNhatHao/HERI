@@ -198,16 +198,12 @@ training:
     mode: max
     patience: 3
     min_delta: 0.0
-    minimum_stage_b_epochs: 1
+    minimum_backbone_adaptation_epochs: 1
   stages:
     stage_a_freeze_epochs: 1
-    stage_b_unfreeze_last_blocks:
-      siglip2: 0
-      dinov3: 0
-      deberta: 0
-    stage_c_full_unfreeze:
-      enabled: false
-      reason: explicit_phase7_deferred_until_validation_justifies_it
+    stage_b_full_unfreeze:
+      enabled: true
+      start_epoch: 2
 
 optimizer:
   type: adamw
@@ -219,6 +215,7 @@ optimizer:
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 0.00000001
+  foreach: false
 
 scheduler:
   type: none

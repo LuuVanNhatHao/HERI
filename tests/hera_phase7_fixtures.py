@@ -25,8 +25,7 @@ def hera_test_config(hidden_dim: int = 12, *, routing_enabled: bool = True) -> d
             "gradient_accumulation_steps": 2,
             "stages": {
                 "stage_a_freeze_epochs": 1,
-                "stage_b_unfreeze_last_blocks": {"siglip2": 1, "dinov3": 1, "deberta": 1},
-                "stage_c_full_unfreeze": {"enabled": False},
+                "stage_b_full_unfreeze": {"enabled": True, "start_epoch": 2},
             },
         },
         "optimizer": {
@@ -34,6 +33,7 @@ def hera_test_config(hidden_dim: int = 12, *, routing_enabled: bool = True) -> d
             "lr_new": 1e-4,
             "lr_backbones": {"siglip2": 1e-6, "dinov3": 1e-6, "deberta": 1e-6},
             "weight_decay": 0.01,
+            "foreach": False,
         },
     }
 

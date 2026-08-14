@@ -1269,21 +1269,26 @@ Train:
 - hypothesis nodes;
 - grounding heads.
 
-Suggested range:
+Canonical duration:
 
 ```text
-3–5 epochs
+3 epochs
 ```
 
-## Stage B — Partial Backbone Adaptation
+## Stage B — Full Backbone Fine-Tuning
 
-Candidate unfreezing:
+Starting at epoch 4, unfreeze every trainable parameter in:
 
 ```text
-SigLIP2: final 4–6 blocks
-DINOv3: final ~4 blocks
-DeBERTa: final 4–6 blocks
+SigLIP2
+DINOv3
+DeBERTa
 ```
+
+Canonical HERA does not stop at a last-block-only adaptation stage. At the
+Stage A → Stage B boundary, rebuild the optimizer, preserve compatible Adam
+state for the already-trained HERA modules, and fail fast unless each
+backbone reports `trainable_parameters == total_parameters`.
 
 Starting LR regions:
 
@@ -1295,13 +1300,9 @@ new modules:
 ~1e-4
 ```
 
-All exact values are YAML parameters.
-
-## Stage C — Optional Full Adaptation
-
-Only use if validation experiments justify it.
-
-Full fine-tuning is not mandatory merely because 48 GB VRAM is available.
+Use BF16 autocast with FP32 parameter storage, gradient checkpointing, and
+gradient accumulation to keep full fine-tuning memory-safe without silently
+freezing backbone parameters. All exact values are YAML parameters.
 
 ---
 
