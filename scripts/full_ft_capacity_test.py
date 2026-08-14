@@ -32,15 +32,23 @@ from src.utils.seed import set_seed
 BYTES_PER_GIB = 1024**3
 
 
-def build_capacity_config(config: Mapping[str, Any], *, batch_size: int, batches: int) -> dict[str, Any]:
+def build_capacity_config(
+    config: Mapping[str, Any],
+    *,
+    batch_size: int,
+    batches: int,
+    gradient_accumulation_steps: int = 1,
+) -> dict[str, Any]:
     """Return a no-checkpoint config that full-fine-tunes from the first batch."""
 
-    if batch_size <= 0 or batches <= 0:
-        raise ValueError("batch_size and batches must be positive")
+    if batch_size <= 0 or batches <= 0 or gradient_accumulation_steps <= 0:
+        raise ValueError("batch_size, batches, and gradient_accumulation_steps must be positive")
+    if batches % gradient_accumulation_steps != 0:
+        raise ValueError("batches must be divisible by gradient_accumulation_steps")
     capacity = copy.deepcopy(dict(config))
     capacity["training"]["epochs"] = 1
     capacity["training"]["micro_batch_size"] = int(batch_size)
-    capacity["training"]["gradient_accumulation_steps"] = 1
+    capacity["training"]["gradient_accumulation_steps"] = int(gradient_accumulation_steps)
     capacity["training"]["auto_resume"]["enabled"] = False
     capacity["training"]["resume_from"] = None
     capacity["training"]["early_stopping"]["enabled"] = False
@@ -80,6 +88,7 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
     if model.deberta is None or not hasattr(model.deberta, "tokenizer"):
         raise RuntimeError("Capacity test requires the configured DeBERTa tokenizer")
     batch_size = int(config["dataloader"]["batch_size"])
+    accumulation = int(config["training"]["gradient_accumulation_steps"])
     loader = create_dataloader(
         config,
         split="train",
@@ -93,6 +102,7 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
     snapshots = [_memory_snapshot(device, stage="model_loaded")]
     completed_batches = 0
     completed_samples = 0
+    completed_optimizer_steps = 0
     started = time.perf_counter()
     iterator = tqdm(loader, total=min(batches, len(loader)), desc="Full-FT capacity")
     for batch_index, raw_batch in enumerate(iterator, start=1):
@@ -108,22 +118,32 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
             ensure_no_uninitialized_parameters(model, context="full fine-tune capacity optimizer creation")
             optimizer, summaries = create_optimizer(model, config)
             optimizer_groups = [summary.__dict__ for summary in summaries]
-        optimizer.zero_grad(set_to_none=True)
-        precision.backward(losses.total)
+            optimizer.zero_grad(set_to_none=True)
+        precision.backward(losses.total / accumulation)
         gradient_coverage = _backbone_gradient_coverage(model)
         snapshots.append(_memory_snapshot(device, stage=f"batch_{batch_index}_backward"))
-        max_grad_norm = config["training"].get("max_grad_norm")
-        if max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                float(max_grad_norm),
-                error_if_nonfinite=True,
-            )
-        precision.optimizer_step(optimizer)
-        optimizer.zero_grad(set_to_none=True)
+        should_step = batch_index % accumulation == 0
+        if should_step:
+            max_grad_norm = config["training"].get("max_grad_norm")
+            if max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    float(max_grad_norm),
+                    error_if_nonfinite=True,
+                )
+            precision.optimizer_step(optimizer)
+            optimizer.zero_grad(set_to_none=True)
+            completed_optimizer_steps += 1
         completed_batches += 1
         completed_samples += int(batch["image"].shape[0])
-        snapshot = _memory_snapshot(device, stage=f"batch_{batch_index}_optimizer_step")
+        snapshot = _memory_snapshot(
+            device,
+            stage=(
+                f"optimizer_step_{completed_optimizer_steps}"
+                if should_step
+                else f"batch_{batch_index}_gradient_accumulation"
+            ),
+        )
         snapshot["loss"] = float(losses.total.detach().cpu())
         snapshot["backbone_gradient_coverage"] = gradient_coverage
         snapshots.append(snapshot)
@@ -132,10 +152,20 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
     duration = time.perf_counter() - started
     if completed_batches == 0:
         raise RuntimeError("Capacity test dataloader produced no batches")
+    expected_optimizer_steps = int(batches) // accumulation
+    if completed_batches != int(batches) or completed_optimizer_steps != expected_optimizer_steps:
+        raise RuntimeError(
+            "Capacity test did not complete the requested work: "
+            f"batches={completed_batches}/{batches}, "
+            f"optimizer_steps={completed_optimizer_steps}/{expected_optimizer_steps}"
+        )
     return {
         "status": "pass",
         "batch_size": batch_size,
+        "gradient_accumulation_steps": accumulation,
+        "effective_batch_size": batch_size * accumulation,
         "completed_batches": completed_batches,
+        "completed_optimizer_steps": completed_optimizer_steps,
         "completed_samples": completed_samples,
         "duration_seconds": duration,
         "samples_per_second": completed_samples / max(duration, 1e-9),
@@ -220,8 +250,9 @@ def _write_report(path: Path, report: Mapping[str, Any]) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", nargs="?", default="config/train_hera.yaml")
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--batches", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--batches", type=int, default=4)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--report", type=Path, default=Path("outputs/full_ft_capacity/report.json"))
     return parser.parse_args()
 
@@ -229,7 +260,12 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     base = load_yaml_config(args.config)
-    config = build_capacity_config(base, batch_size=args.batch_size, batches=args.batches)
+    config = build_capacity_config(
+        base,
+        batch_size=args.batch_size,
+        batches=args.batches,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+    )
     validate_hera_config(config, mode="train")
     setup_logging(str(config["logging"]["level"]))
     set_seed(int(config["project"]["seed"]))
@@ -242,9 +278,14 @@ def main() -> int:
         report = {
             "status": "oom",
             "batch_size": args.batch_size,
+            "gradient_accumulation_steps": args.gradient_accumulation_steps,
+            "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
             "completed_batches": 0,
             "error": str(error),
             "recommended_next_batch_size": max(1, args.batch_size // 2),
+            "recommended_accumulation_to_preserve_effective_batch": (
+                args.gradient_accumulation_steps * 2 if args.batch_size > 1 else args.gradient_accumulation_steps
+            ),
             "checkpoint_written": False,
         }
         _write_report(args.report, report)

@@ -109,12 +109,12 @@ validation:
             - Best checkpoint, last checkpoint, history.csv, epoch metrics, router diagnostics, and bound thresholds are written.
             - Stage A freeze and optimizer group accounting pass.
         - name: phase7_full_finetune_capacity
-          command: [python, scripts/full_ft_capacity_test.py, config/train_hera.yaml, --batch-size, "8", --batches, "2"]
+          command: [python, scripts/full_ft_capacity_test.py, config/train_hera.yaml, --batch-size, "4", --batches, "4", --gradient-accumulation-steps, "2"]
           required_for_training: true
           expected_pass_criteria:
             - All SigLIP2, DINOv3, and DeBERTa parameters are trainable from the first capacity-test batch.
             - Gradients reach all three backbones and two complete AdamW optimizer steps succeed.
-            - Physical batch size 8 fits in VRAM without writing a model checkpoint.
+            - Physical batch size 4 with gradient accumulation 2 preserves effective batch 8 without writing a model checkpoint.
 
 progress:
   enabled: true
