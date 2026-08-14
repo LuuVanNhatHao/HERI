@@ -184,7 +184,7 @@ loss:
 
 training:
   epochs: 20
-  micro_batch_size: 8
+  micro_batch_size: 16
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
   resume_from:
@@ -244,7 +244,7 @@ checkpointing:
   top_k: 1
 
 dataloader:
-  batch_size: 8
+  batch_size: 16
   num_workers: 8
   pin_memory: true
   persistent_workers: true

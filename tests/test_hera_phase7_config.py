@@ -64,7 +64,7 @@ def test_server_validation_finishes_with_full_finetune_capacity_gate() -> None:
         "scripts/full_ft_capacity_test.py",
         "config/train_hera.yaml",
         "--batch-size",
-        "8",
+        "16",
         "--batches",
         "2",
         "--gradient-accumulation-steps",
@@ -75,14 +75,14 @@ def test_server_validation_finishes_with_full_finetune_capacity_gate() -> None:
     }
 
 
-def test_canonical_training_uses_validated_physical_batch_eight() -> None:
+def test_canonical_training_uses_validated_physical_batch_sixteen() -> None:
     config = load_yaml_config("config/train_hera.yaml")
 
-    assert config["training"]["micro_batch_size"] == 8
-    assert config["dataloader"]["batch_size"] == 8
+    assert config["training"]["micro_batch_size"] == 16
+    assert config["dataloader"]["batch_size"] == 16
     assert config["training"]["gradient_accumulation_steps"] == 1
     assert (
         config["dataloader"]["batch_size"]
         * config["training"]["gradient_accumulation_steps"]
-        == 8
+        == 16
     )
