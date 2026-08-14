@@ -63,7 +63,7 @@ def build_capacity_config(config: Mapping[str, Any], *, batch_size: int, batches
 def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, Any]:
     """Run complete optimization steps without validation or checkpoint writes."""
 
-    device = torch.device(str(config["runtime"]["device"]))
+    device = _resolve_cuda_device(str(config["runtime"]["device"]))
     if device.type != "cuda" or not torch.cuda.is_available():
         raise RuntimeError("Full fine-tune capacity testing requires an available CUDA GPU")
     torch.cuda.set_device(device)
@@ -140,6 +140,15 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
         "snapshots": snapshots,
         "checkpoint_written": False,
     }
+
+
+def _resolve_cuda_device(configured_device: str) -> torch.device:
+    """Return an indexed CUDA device for APIs that reject bare ``cuda``."""
+
+    device = torch.device(configured_device)
+    if device.type == "cuda" and device.index is None:
+        return torch.device("cuda", torch.cuda.current_device())
+    return device
 
 
 def _assert_full_backbone_trainability(model: HERADGM) -> None:

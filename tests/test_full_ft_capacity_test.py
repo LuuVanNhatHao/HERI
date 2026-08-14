@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.full_ft_capacity_test import build_capacity_config
+from scripts.full_ft_capacity_test import _resolve_cuda_device, build_capacity_config
 from src.utils.config import load_yaml_config, validate_hera_config
 
 
@@ -26,3 +26,10 @@ def test_capacity_config_forces_immediate_full_finetuning_without_resume() -> No
 def test_capacity_config_rejects_nonpositive_work(batch_size: int, batches: int) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         build_capacity_config(load_yaml_config("config/train_hera.yaml"), batch_size=batch_size, batches=batches)
+
+
+def test_capacity_test_resolves_bare_cuda_to_current_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("scripts.full_ft_capacity_test.torch.cuda.current_device", lambda: 0)
+
+    assert str(_resolve_cuda_device("cuda")) == "cuda:0"
+    assert str(_resolve_cuda_device("cuda:2")) == "cuda:2"
