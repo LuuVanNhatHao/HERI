@@ -2,7 +2,22 @@ import pytest
 import torch
 
 from graph_fixtures import graph_config, synthetic_evidence
+from src.graph.hgt import _accumulate_edge_messages
 from src.graph.reasoner import HypothesisEvidenceGraphReasoner
+
+
+def test_edge_message_accumulation_casts_bf16_autocast_output_to_fp32_residual() -> None:
+    accumulator = torch.zeros(3, 2, dtype=torch.float32)
+    counts = torch.zeros(3, 1, dtype=torch.float32)
+    destinations = torch.tensor([0, 2, 2])
+    messages = torch.tensor([[1, 2], [3, 4], [5, 6]], dtype=torch.bfloat16)
+
+    _accumulate_edge_messages(accumulator, counts, destinations, messages)
+
+    assert accumulator.dtype == torch.float32
+    assert counts.dtype == torch.float32
+    assert torch.equal(accumulator, torch.tensor([[1, 2], [0, 0], [8, 10]], dtype=torch.float32))
+    assert torch.equal(counts, torch.tensor([[1], [0], [2]], dtype=torch.float32))
 
 
 def test_real_hgt_output_shape_when_backend_available() -> None:

@@ -14,6 +14,24 @@ class HGTBackendUnavailable(RuntimeError):
     """Raised when the configured production HGT backend is unavailable."""
 
 
+def _accumulate_edge_messages(
+    accumulator: torch.Tensor,
+    counts: torch.Tensor,
+    destinations: torch.Tensor,
+    messages: torch.Tensor,
+) -> None:
+    """Accumulate autocast messages into the residual stream's stable dtype."""
+
+    destinations = destinations.to(device=accumulator.device)
+    messages = messages.to(device=accumulator.device, dtype=accumulator.dtype)
+    accumulator.index_add_(0, destinations, messages)
+    counts.index_add_(
+        0,
+        destinations,
+        counts.new_ones((destinations.numel(), 1)),
+    )
+
+
 class HGTGraphBlock(nn.Module):
     """One HGTConv update followed by residual, dropout, and LayerNorm."""
 
@@ -63,11 +81,11 @@ class HGTGraphBlock(nn.Module):
             dst_type = edge_type[2]
             messages = self.edge_attr_encoders[edge_index](attrs.to(x_dict[dst_type].dtype))
             destinations = indices[1]
-            edge_updates[dst_type].index_add_(0, destinations, messages)
-            edge_counts[dst_type].index_add_(
-                0,
+            _accumulate_edge_messages(
+                edge_updates[dst_type],
+                edge_counts[dst_type],
                 destinations,
-                torch.ones((destinations.numel(), 1), device=destinations.device, dtype=messages.dtype),
+                messages,
             )
         result: dict[str, torch.Tensor] = {}
         for node_type in NODE_TYPES:

@@ -184,7 +184,7 @@ def load_auto_model(
         "trust_remote_code": trust_remote_code,
     }
     if dtype is not None:
-        kwargs["torch_dtype"] = dtype
+        kwargs["dtype"] = dtype
     if attn_implementation:
         kwargs["attn_implementation"] = attn_implementation
     if extra_kwargs:

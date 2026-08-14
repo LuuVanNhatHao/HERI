@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+import types
 
 import pytest
+import torch
 
 from src.compat import transformers_compat
 from src.compat.transformers_compat import TransformersCompatibilityError
@@ -60,3 +63,29 @@ def test_transformers_major_five_fails_with_explicit_diagnostic(monkeypatch: pyt
     monkeypatch.setattr(transformers_compat, "_transformers_version", lambda: "5.15.0")
     with pytest.raises(TransformersCompatibilityError, match="unsupported transformers version"):
         transformers_compat._ensure_supported_transformers_version("AutoTokenizer.from_pretrained")
+
+
+def test_auto_model_loader_uses_transformers_dtype_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAutoModel:
+        @classmethod
+        def from_pretrained(cls, name: str, **kwargs: object) -> object:
+            captured["name"] = name
+            captured.update(kwargs)
+            return object()
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.__version__ = "4.57.6"
+    fake_transformers.AutoModel = FakeAutoModel
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    transformers_compat.load_auto_model(
+        name="fake/model",
+        stage="test",
+        torch_dtype="bf16",
+    )
+
+    assert captured["name"] == "fake/model"
+    assert captured["dtype"] is torch.bfloat16
+    assert "torch_dtype" not in captured
