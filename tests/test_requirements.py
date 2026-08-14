@@ -12,7 +12,7 @@ def _requirement_names() -> set[str]:
     names: set[str] = set()
     for line in Path("requirements.txt").read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped or stripped.startswith(("#", "--")):
             continue
         name = stripped.split(";", maxsplit=1)[0]
         for separator in ("==", ">=", "<=", "~=", "!=", ">", "<"):
@@ -37,10 +37,17 @@ def test_transformers_tokenizer_optional_dependencies_are_declared() -> None:
     assert "protobuf" in requirements
 
 
-def test_transformers_major_version_is_bounded_before_five() -> None:
+def test_transformers_is_pinned_to_validated_last_four_x_patch() -> None:
     requirement = _requirement_line("transformers")
-    assert ">=4.57.2" in requirement
-    assert "<5.0" in requirement
+    assert requirement == "transformers==4.57.6"
+
+
+def test_blackwell_cuda_pytorch_stack_is_pinned() -> None:
+    contents = Path("requirements.txt").read_text(encoding="utf-8")
+    assert "--extra-index-url https://download.pytorch.org/whl/cu128" in contents
+    assert _requirement_line("torch") == "torch==2.8.0+cu128"
+    assert _requirement_line("torchvision") == "torchvision==0.23.0+cu128"
+    assert _requirement_line("torch-geometric") == "torch-geometric==2.7.0"
 
 
 def test_huggingface_hub_major_version_matches_transformers_four() -> None:
