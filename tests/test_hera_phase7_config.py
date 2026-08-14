@@ -40,9 +40,31 @@ def test_server_validation_config_uses_canonical_python_config_commands() -> Non
     config = load_yaml_config("config/server_validation.yaml")
     validate_server_validation_config(config)
     assert config["output"]["root"] == "outputs/server_validation"
+    assert config["server"] == {
+        "expected_gpu_vram_gb": 32,
+        "expected_disk_gb": 150,
+        "cuda_environment": "13.2",
+    }
     for phase in config["validation"]["phases"]:
         for check in phase["checks"]:
             command = check["command"]
             assert command[0] == "python"
             assert command[1].startswith("scripts/")
             assert command[2].startswith("config/")
+
+
+def test_server_validation_finishes_with_full_finetune_capacity_gate() -> None:
+    config = load_yaml_config("config/server_validation.yaml")
+    final_check = config["validation"]["phases"][-1]["checks"][-1]
+
+    assert final_check["name"] == "phase7_full_finetune_capacity"
+    assert final_check["required_for_training"] is True
+    assert final_check["command"] == [
+        "python",
+        "scripts/full_ft_capacity_test.py",
+        "config/train_hera.yaml",
+        "--batch-size",
+        "8",
+        "--batches",
+        "2",
+    ]
