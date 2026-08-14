@@ -150,12 +150,13 @@ class EvidenceReliabilityRouter(nn.Module):
             return metadata
         visual_scores = routed_sets["visual_semantic"].reliability_scores
         text_scores = routed_sets["text_alignment"].reliability_scores
-        confidence = torch.sqrt(
-            visual_scores.unsqueeze(2).clamp_min(0.0)
-            * text_scores.unsqueeze(1).clamp_min(0.0)
-        )
         valid = metadata.visual_mask.unsqueeze(2) & metadata.text_mask.unsqueeze(1)
-        return replace(metadata, edge_confidence=confidence.masked_fill(~valid, 0.0))
+        confidence = _masked_geometric_mean_confidence(
+            visual_scores,
+            text_scores,
+            valid,
+        )
+        return replace(metadata, edge_confidence=confidence)
 
     def _regularization_loss(
         self,
@@ -187,6 +188,7 @@ class EvidenceReliabilityRouter(nn.Module):
 
 
 def _normalized_reliability_target(scores: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    scores = scores.detach()
     target = torch.zeros_like(scores, dtype=torch.float32)
     for batch_index in range(scores.shape[0]):
         valid = mask[batch_index]
@@ -198,3 +200,26 @@ def _normalized_reliability_target(scores: torch.Tensor, mask: torch.Tensor) -> 
         normalized = (values - low) / (high - low).clamp_min(1e-6)
         target[batch_index, valid] = 0.5 + 0.5 * normalized
     return target.to(dtype=scores.dtype)
+
+
+def _masked_geometric_mean_confidence(
+    visual_scores: torch.Tensor,
+    text_scores: torch.Tensor,
+    valid: torch.Tensor,
+) -> torch.Tensor:
+    """Compute padded cross-modal confidence without ``sqrt(0)`` gradients."""
+
+    expected = (visual_scores.shape[0], visual_scores.shape[1], text_scores.shape[1])
+    if valid.shape != expected:
+        raise ValueError(f"cross-modal valid mask must have shape {expected}, got {tuple(valid.shape)}")
+    product = (
+        visual_scores.float().unsqueeze(2).clamp_min(0.0)
+        * text_scores.float().unsqueeze(1).clamp_min(0.0)
+    )
+    safe_product = torch.where(
+        valid,
+        product.clamp_min(1e-12),
+        torch.ones_like(product),
+    )
+    confidence = torch.sqrt(safe_product).to(dtype=visual_scores.dtype)
+    return confidence.masked_fill(~valid, 0.0)

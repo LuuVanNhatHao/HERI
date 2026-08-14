@@ -216,7 +216,11 @@ class BaselineTrainer:
                 sums[key] = sums.get(key, 0.0) + value
             if batch_index % accumulation == 0:
                 if max_grad_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(max_grad_norm))
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        float(max_grad_norm),
+                        error_if_nonfinite=True,
+                    )
                 self.precision.optimizer_step(optimizer)
                 if scheduler is not None:
                     scheduler.step()

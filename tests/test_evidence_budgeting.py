@@ -37,6 +37,25 @@ def test_budget_handles_zero_valid_evidence_without_nan() -> None:
     assert torch.isfinite(budgeted.features).all()
 
 
+def test_saliency_scores_are_stop_gradient_metadata() -> None:
+    features = torch.randn(1, 4, 3, requires_grad=True)
+    scores = torch.linalg.vector_norm(features - features.mean(dim=1, keepdim=True), dim=-1)
+
+    budgeted = budget_features(
+        features=features,
+        valid_mask=torch.ones(1, 4, dtype=torch.bool),
+        max_nodes=2,
+        strategy="saliency_sequence",
+        selection_scores=scores,
+    )
+
+    assert budgeted.selection_scores is not None
+    assert not budgeted.selection_scores.requires_grad
+    budgeted.features.sum().backward()
+    assert features.grad is not None
+    assert torch.isfinite(features.grad).all()
+
+
 def test_forensic_descriptors_respond_to_high_frequency_artifacts() -> None:
     smooth = torch.full((1, 3, 32, 32), 0.5)
     checker = ((torch.arange(32).view(1, -1) + torch.arange(32).view(-1, 1)) % 2).float()

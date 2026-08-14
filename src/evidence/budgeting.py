@@ -36,6 +36,10 @@ def budget_features(
         raise ValueError("valid_mask must be [B,N] aligned with features")
     mask = valid_mask.to(torch.bool)
     if selection_scores is not None:
+        # Saliency controls discrete node selection and supervises the router as
+        # a fixed pseudo-target. It must not create a second optimization path
+        # into pretrained backbone activations.
+        selection_scores = selection_scores.detach()
         if selection_scores.shape != mask.shape:
             raise ValueError("selection_scores must be [B,N] aligned with features")
         if not torch.isfinite(selection_scores).all():

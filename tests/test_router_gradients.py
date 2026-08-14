@@ -12,6 +12,7 @@ from src.graph.validation import graph_statistics
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADecisionModule
 from src.routing import EvidenceReliabilityRouter
+from src.routing.router import _masked_geometric_mean_confidence, _normalized_reliability_target
 
 
 def test_downstream_phase5_loss_backpropagates_to_router_parameters() -> None:
@@ -38,6 +39,28 @@ def test_downstream_phase5_loss_backpropagates_to_router_parameters() -> None:
     assert grads
     assert all(torch.isfinite(grad).all() for grad in grads)
     assert any(float(grad.abs().sum()) > 0 for grad in grads)
+
+
+def test_padded_cross_modal_confidence_has_finite_gradients() -> None:
+    visual_scores = torch.tensor([[0.8, 0.0]], requires_grad=True)
+    text_scores = torch.tensor([[0.6, 0.0]], requires_grad=True)
+    valid = torch.tensor([[[True, False], [False, False]]])
+
+    confidence = _masked_geometric_mean_confidence(visual_scores, text_scores, valid)
+    confidence.sum().backward()
+
+    assert confidence.tolist() == [[[confidence[0, 0, 0].item(), 0.0], [0.0, 0.0]]]
+    assert visual_scores.grad is not None and torch.isfinite(visual_scores.grad).all()
+    assert text_scores.grad is not None and torch.isfinite(text_scores.grad).all()
+    assert visual_scores.grad[0, 1] == 0
+    assert text_scores.grad[0, 1] == 0
+
+
+def test_reliability_pseudo_target_is_detached() -> None:
+    scores = torch.tensor([[0.2, 0.8]], requires_grad=True)
+    target = _normalized_reliability_target(scores, torch.tensor([[True, True]]))
+
+    assert not target.requires_grad
 
 
 def _hypotheses_from_routed_evidence(evidence: object) -> torch.Tensor:

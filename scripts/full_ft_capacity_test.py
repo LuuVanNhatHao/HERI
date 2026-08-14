@@ -114,7 +114,11 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
         snapshots.append(_memory_snapshot(device, stage=f"batch_{batch_index}_backward"))
         max_grad_norm = config["training"].get("max_grad_norm")
         if max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(max_grad_norm))
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(),
+                float(max_grad_norm),
+                error_if_nonfinite=True,
+            )
         precision.optimizer_step(optimizer)
         optimizer.zero_grad(set_to_none=True)
         completed_batches += 1
@@ -169,7 +173,21 @@ def _backbone_gradient_coverage(model: HERADGM) -> dict[str, dict[str, int]]:
     coverage: dict[str, dict[str, int]] = {}
     for name, module in model.backbone_modules().items():
         trainable = [parameter for parameter in module.parameters() if parameter.requires_grad]
-        with_gradient = [parameter for parameter in trainable if parameter.grad is not None]
+        named_with_gradient = [
+            (parameter_name, parameter)
+            for parameter_name, parameter in module.named_parameters()
+            if parameter.requires_grad and parameter.grad is not None
+        ]
+        with_gradient = [parameter for _, parameter in named_with_gradient]
+        nonfinite = [
+            parameter_name
+            for parameter_name, parameter in named_with_gradient
+            if not bool(torch.isfinite(parameter.grad).all())
+        ]
+        if nonfinite:
+            raise FloatingPointError(
+                f"Non-finite gradients reached full-fine-tune backbone {name}: {nonfinite[:10]}"
+            )
         gradient_elements = sum(parameter.grad.numel() for parameter in with_gradient if parameter.grad is not None)
         if gradient_elements == 0:
             raise RuntimeError(f"No gradients reached full-fine-tune backbone {name}")
