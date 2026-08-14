@@ -110,6 +110,8 @@ validation:
             - Stage A freeze and optimizer group accounting pass.
         - name: phase7_full_finetune_capacity
           command: [python, scripts/full_ft_capacity_test.py, config/train_hera.yaml, --batch-size, "4", --batches, "4", --gradient-accumulation-steps, "2"]
+          environment:
+            PYTORCH_ALLOC_CONF: expandable_segments:True
           required_for_training: true
           expected_pass_criteria:
             - All SigLIP2, DINOv3, and DeBERTa parameters are trainable from the first capacity-test batch.

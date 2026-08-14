@@ -70,6 +70,9 @@ def test_server_validation_finishes_with_full_finetune_capacity_gate() -> None:
         "--gradient-accumulation-steps",
         "2",
     ]
+    assert final_check["environment"] == {
+        "PYTORCH_ALLOC_CONF": "expandable_segments:True"
+    }
 
 
 def test_canonical_training_uses_safe_physical_batch_with_effective_batch_eight() -> None:

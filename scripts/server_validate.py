@@ -142,6 +142,10 @@ def _run_check(
     metadata = {
         "git_commit": git_commit,
         "command_config_sha256": _command_config_sha256(command),
+        "environment": {
+            str(key): str(value)
+            for key, value in dict(check.get("environment", {})).items()
+        },
     }
     reusable = _load_reusable_check_record(
         check,
@@ -158,6 +162,7 @@ def _run_check(
     tqdm.write(f"Command: {' '.join(command)}")
 
     env = os.environ.copy()
+    env.update(metadata["environment"])
     if command[0] == sys.executable:
         env["PYTHONUNBUFFERED"] = "1"
     stdout_tail: deque[str] = deque(maxlen=4000)
@@ -244,6 +249,8 @@ def _load_reusable_check_record(
     if bool(validation_settings["resume_require_git_commit_match"]):
         if record.get("git_commit") != metadata["git_commit"]:
             return None
+    if metadata.get("environment") and record.get("environment") != metadata["environment"]:
+        return None
     reusable = dict(record)
     reusable["skipped"] = True
     reusable["resume_source"] = str(record_path)
