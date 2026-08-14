@@ -241,7 +241,7 @@ checkpointing:
   tie_breakers: [map, auc, text_f1, image_mean_iou]
   keep_best: true
   keep_last: true
-  top_k: 1
+  top_k: 0
 
 dataloader:
   batch_size: 16
