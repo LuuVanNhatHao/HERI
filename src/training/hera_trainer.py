@@ -874,13 +874,19 @@ def apply_configured_gradient_checkpointing(model: HERADGM, config: Mapping[str,
     settings = config["runtime"]["gradient_checkpointing"]
     enabled = bool(settings["enabled"])
     only_trainable = bool(settings["only_trainable_backbones"])
+    use_reentrant = bool(settings.get("use_reentrant", False))
     requested_backbones = settings["backbones"]
     actual: dict[str, bool] = {}
     for name, module in model.backbone_modules().items():
         requested = enabled and bool(requested_backbones.get(name, False))
         if requested and only_trainable and not _has_trainable_parameters(module):
             requested = False
-        actual[name] = set_gradient_checkpointing(module, enabled=requested, stage=name)
+        actual[name] = set_gradient_checkpointing(
+            module,
+            enabled=requested,
+            stage=name,
+            use_reentrant=use_reentrant,
+        )
     return actual
 
 

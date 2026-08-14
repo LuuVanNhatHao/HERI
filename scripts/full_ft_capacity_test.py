@@ -55,6 +55,7 @@ def build_capacity_config(config: Mapping[str, Any], *, batch_size: int, batches
     checkpointing = capacity["runtime"]["gradient_checkpointing"]
     checkpointing["enabled"] = True
     checkpointing["only_trainable_backbones"] = True
+    checkpointing["use_reentrant"] = False
     checkpointing["backbones"] = {"siglip2": True, "dinov3": True, "deberta": True}
     capacity["output"]["root"] = "outputs/full_ft_capacity"
     return capacity

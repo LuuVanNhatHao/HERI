@@ -46,9 +46,14 @@ class CheckpointableTinyBackbone(TinyBackbone):
     def __init__(self) -> None:
         super().__init__()
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_kwargs: dict[str, bool] | None = None
 
-    def gradient_checkpointing_enable(self) -> None:
+    def gradient_checkpointing_enable(
+        self,
+        gradient_checkpointing_kwargs: dict[str, bool] | None = None,
+    ) -> None:
         self.gradient_checkpointing = True
+        self.gradient_checkpointing_kwargs = gradient_checkpointing_kwargs
 
     def gradient_checkpointing_disable(self) -> None:
         self.gradient_checkpointing = False
@@ -122,6 +127,7 @@ def test_gradient_checkpointing_skips_stage_a_and_enables_full_finetune_backbone
         "gradient_checkpointing": {
             "enabled": True,
             "only_trainable_backbones": True,
+            "use_reentrant": False,
             "backbones": {"siglip2": True, "dinov3": True, "deberta": True},
         }
     }
@@ -142,6 +148,8 @@ def test_gradient_checkpointing_skips_stage_a_and_enables_full_finetune_backbone
     apply_training_stage(model, cfg, epoch=2)
     stage_b = apply_configured_gradient_checkpointing(model, cfg)
     assert stage_b == {"siglip2": True, "dinov3": True, "deberta": True}
+    for module in model.backbone_modules().values():
+        assert module.gradient_checkpointing_kwargs == {"use_reentrant": False}
 
 
 def test_hera_nan_guard_fails_with_context() -> None:

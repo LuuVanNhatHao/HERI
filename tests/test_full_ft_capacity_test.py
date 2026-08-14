@@ -19,6 +19,7 @@ def test_capacity_config_forces_immediate_full_finetuning_without_resume() -> No
     assert config["training"]["auto_resume"]["enabled"] is False
     assert config["training"]["resume_from"] is None
     assert config["runtime"]["gradient_checkpointing"]["enabled"] is True
+    assert config["runtime"]["gradient_checkpointing"]["use_reentrant"] is False
     validate_hera_config(config, mode="train")
 
 

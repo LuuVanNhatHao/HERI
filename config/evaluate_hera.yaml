@@ -269,6 +269,7 @@ runtime:
   gradient_checkpointing:
     enabled: false
     only_trainable_backbones: true
+    use_reentrant: false
     backbones:
       siglip2: false
       dinov3: false

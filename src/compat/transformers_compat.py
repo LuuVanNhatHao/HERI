@@ -288,7 +288,13 @@ def load_auto_processor(
         )
 
 
-def set_gradient_checkpointing(module: Any, *, enabled: bool, stage: str) -> bool:
+def set_gradient_checkpointing(
+    module: Any,
+    *,
+    enabled: bool,
+    stage: str,
+    use_reentrant: bool = False,
+) -> bool:
     """Enable/disable HF gradient checkpointing through centralized compatibility logic."""
 
     target = getattr(module, "model", module)
@@ -298,7 +304,16 @@ def set_gradient_checkpointing(module: Any, *, enabled: bool, stage: str) -> boo
             return False
         return False
     if hasattr(target, "gradient_checkpointing_enable"):
-        target.gradient_checkpointing_enable()
+        try:
+            target.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": bool(use_reentrant)}
+            )
+        except TypeError as exc:
+            raise_transformers_diagnostic(
+                f"{stage}: gradient checkpointing",
+                "the configured Transformers model cannot select the required "
+                f"checkpoint implementation: {exc!r}",
+            )
         return True
     if hasattr(target, "enable_gradient_checkpointing"):
         target.enable_gradient_checkpointing()
