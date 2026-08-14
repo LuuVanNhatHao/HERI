@@ -9,14 +9,14 @@ from src.utils.config import load_yaml_config, validate_hera_config
 def test_capacity_config_forces_immediate_full_finetuning_without_resume() -> None:
     config = build_capacity_config(
         load_yaml_config("config/train_hera.yaml"),
-        batch_size=4,
-        batches=4,
-        gradient_accumulation_steps=2,
+        batch_size=8,
+        batches=2,
+        gradient_accumulation_steps=1,
     )
 
-    assert config["training"]["micro_batch_size"] == 4
-    assert config["training"]["gradient_accumulation_steps"] == 2
-    assert config["dataloader"]["batch_size"] == 4
+    assert config["training"]["micro_batch_size"] == 8
+    assert config["training"]["gradient_accumulation_steps"] == 1
+    assert config["dataloader"]["batch_size"] == 8
     assert config["training"]["stages"] == {
         "stage_a_freeze_epochs": 0,
         "stage_b_full_unfreeze": {"enabled": True, "start_epoch": 1},
