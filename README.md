@@ -42,3 +42,23 @@ python scripts/evaluate.py config/evaluate_baseline_b1.yaml
 
 Local resource-dependent checks are recorded in
 `outputs/phase2/deferred_server_validation.json`.
+
+## CPU/DataLoader tuning on GPU servers
+
+Canonical server training uses 16 single-threaded DataLoader workers with two
+prefetched batches per worker. This matches a 32-vCPU host while preventing
+PyTorch and Hugging Face tokenizer thread pools from multiplying inside each
+worker. Pinned batches are transferred to CUDA non-blockingly.
+
+Measure the host-side input pipeline before changing the canonical worker
+count:
+
+```bash
+python scripts/dataloader_benchmark.py config/train_hera.yaml \
+  --workers 8 12 16 24 \
+  --warmup-batches 10 \
+  --batches 100
+```
+
+Use the reported `best_num_workers` only when it improves end-to-end training
+`samples/s`; the complete HERA full-fine-tune remains primarily GPU-bound.

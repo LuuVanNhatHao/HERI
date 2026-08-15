@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from functools import partial
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -13,6 +15,13 @@ from src.utils.config import get_key, require_key
 from .collate import dgm4_collate
 from .dataset import DGM4Dataset
 from .sampler import IDAwareSampler
+
+
+def _configure_data_worker(_: int, *, torch_threads: int) -> None:
+    """Keep each loader worker single-threaded to avoid nested CPU oversubscription."""
+
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    torch.set_num_threads(torch_threads)
 
 
 def _annotation_path(config: Mapping[str, Any], split: str) -> Path:
@@ -69,6 +78,7 @@ def create_dataloader(
     pin_memory = bool(require_key(config, "dataloader.pin_memory"))
     persistent_workers = bool(require_key(config, "dataloader.persistent_workers"))
     prefetch_factor = get_key(config, "dataloader.prefetch_factor", None)
+    worker_threads = int(get_key(config, "dataloader.worker_threads", 1))
     drop_last = bool(require_key(config, "dataloader.drop_last"))
     seed = int(require_key(config, "dataloader.seed"))
     shuffle_config = get_key(config, f"dataloader.shuffle.{split}", split == "train")
@@ -90,7 +100,13 @@ def create_dataloader(
         "generator": torch.Generator().manual_seed(seed),
     }
     if num_workers > 0:
+        if worker_threads <= 0:
+            raise ValueError("dataloader.worker_threads must be positive")
         kwargs["persistent_workers"] = persistent_workers
+        kwargs["worker_init_fn"] = partial(
+            _configure_data_worker,
+            torch_threads=worker_threads,
+        )
         if prefetch_factor is not None:
             kwargs["prefetch_factor"] = int(prefetch_factor)
     return DataLoader(dataset, **kwargs)

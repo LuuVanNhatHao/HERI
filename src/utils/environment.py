@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import platform
 import subprocess
 import sys
@@ -54,8 +55,22 @@ def collect_environment_metadata(repo_root: str | Path = ".") -> dict[str, Any]:
         },
     }
     try:
+        affinity_cpu_count = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity_cpu_count = int(os.cpu_count() or 1)
+    metadata["cpu"] = {
+        "logical_cpu_count": int(os.cpu_count() or 1),
+        "affinity_cpu_count": int(affinity_cpu_count),
+    }
+    try:
         import torch
 
+        metadata["cpu"].update(
+            {
+                "torch_num_threads": int(torch.get_num_threads()),
+                "torch_num_interop_threads": int(torch.get_num_interop_threads()),
+            }
+        )
         metadata["cuda"] = {
             "available": bool(torch.cuda.is_available()),
             "torch_cuda": torch.version.cuda,

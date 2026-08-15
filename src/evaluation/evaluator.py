@@ -66,9 +66,14 @@ class PredictionBundle:
 def move_batch_to_device(batch: Mapping[str, Any], device: torch.device) -> dict[str, Any]:
     """Move tensor values in a structured batch to device."""
 
+    non_blocking = device.type == "cuda"
     moved: dict[str, Any] = {}
     for key, value in batch.items():
-        moved[key] = value.to(device) if isinstance(value, torch.Tensor) else value
+        moved[key] = (
+            value.to(device, non_blocking=non_blocking)
+            if isinstance(value, torch.Tensor)
+            else value
+        )
     return moved
 
 

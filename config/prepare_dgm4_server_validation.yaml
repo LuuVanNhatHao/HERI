@@ -27,7 +27,8 @@ tokenizer:
 
 dataloader:
   batch_size: 16
-  num_workers: 8
+  num_workers: 16
+  worker_threads: 1
   pin_memory: true
   persistent_workers: true
   prefetch_factor: 2
@@ -50,7 +51,7 @@ preflight:
   verify_text_positions: true
   verify_split_counts: true
   write_manifest: true
-  worker_threads: 64
+  worker_threads: 32
 
 smoke:
   split: train
