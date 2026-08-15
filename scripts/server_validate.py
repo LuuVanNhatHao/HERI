@@ -16,8 +16,7 @@ from typing import Any, Mapping
 from tqdm.auto import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT))
 
 from src.utils.config import dump_yaml, load_yaml_config, validate_server_validation_config
 from src.utils.environment import collect_environment_metadata
