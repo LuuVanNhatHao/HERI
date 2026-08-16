@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from scripts.full_ft_capacity_test import _resolve_cuda_device, build_capacity_config
-from src.utils.config import load_yaml_config, validate_hera_config
+from src.utils.config import load_yaml_config, validate_baseline_config, validate_hera_config
 
 
 def test_capacity_config_forces_immediate_full_finetuning_without_resume() -> None:
@@ -26,6 +26,32 @@ def test_capacity_config_forces_immediate_full_finetuning_without_resume() -> No
     assert config["runtime"]["gradient_checkpointing"]["enabled"] is True
     assert config["runtime"]["gradient_checkpointing"]["use_reentrant"] is False
     validate_hera_config(config, mode="train")
+
+
+@pytest.mark.parametrize(
+    "path,baseline_type",
+    [
+        ("config/train_baseline_b0.yaml", "b0_global"),
+        ("config/train_baseline_b1.yaml", "b1_cross_attention"),
+    ],
+)
+def test_capacity_config_supports_controlled_full_ft_baselines(
+    path: str,
+    baseline_type: str,
+) -> None:
+    config = build_capacity_config(
+        load_yaml_config(path),
+        batch_size=16,
+        batches=2,
+        gradient_accumulation_steps=1,
+    )
+
+    assert config["model"]["baseline_type"] == baseline_type
+    assert config["training"]["stages"] == {
+        "stage_a_freeze_epochs": 0,
+        "stage_b_full_unfreeze": {"enabled": True, "start_epoch": 1},
+    }
+    validate_baseline_config(config, mode="train")
 
 
 @pytest.mark.parametrize(

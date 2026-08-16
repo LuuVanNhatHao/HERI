@@ -1,4 +1,4 @@
-"""Probe whether canonical HERA full fine-tuning fits in GPU memory."""
+"""Probe whether HERA or a controlled baseline full fine-tune fits in GPU memory."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import torch
+from torch import nn
 from tqdm.auto import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,12 +19,14 @@ sys.path.insert(0, str(ROOT))
 
 from src.data.loader import create_dataloader
 from src.evaluation.evaluator import move_batch_to_device
+from src.losses.baseline_losses import BaselineMultitaskLoss
 from src.losses.hera_components import HERAMultitaskLoss
+from src.models.baselines import build_baseline_model
 from src.models.hera import HERADGM
 from src.training.hera_trainer import apply_configured_gradient_checkpointing
 from src.training.optimizer import apply_training_stage, create_optimizer, ensure_no_uninitialized_parameters
 from src.training.precision import PrecisionManager
-from src.utils.config import load_yaml_config, validate_hera_config
+from src.utils.config import load_yaml_config, validate_baseline_config, validate_hera_config
 from src.utils.logging import setup_logging
 from src.utils.seed import set_seed
 
@@ -79,11 +82,18 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
     torch.cuda.reset_peak_memory_stats(device)
 
     precision = PrecisionManager(precision=str(config["runtime"]["precision"]), device=device)
-    model = HERADGM.from_config(config, load_backbones=True).to(device)
+    is_hera = config.get("model", {}).get("model_type") == "hera"
+    if is_hera:
+        model = HERADGM.from_config(config, load_backbones=True).to(device)
+        loss_fn = HERAMultitaskLoss(config["loss"])
+        model_variant = "hera"
+    else:
+        model = build_baseline_model(config, load_backbones=True).to(device)
+        loss_fn = BaselineMultitaskLoss(config["loss"]["weights"])
+        model_variant = str(config["model"]["baseline_type"])
     apply_training_stage(model, config, epoch=1)
     _assert_full_backbone_trainability(model)
     gradient_checkpointing = apply_configured_gradient_checkpointing(model, config)
-    loss_fn = HERAMultitaskLoss(config["loss"])
     if model.deberta is None or not hasattr(model.deberta, "tokenizer"):
         raise RuntimeError("Capacity test requires the configured DeBERTa tokenizer")
     batch_size = int(config["dataloader"]["batch_size"])
@@ -160,6 +170,7 @@ def run_capacity_test(config: Mapping[str, Any], *, batches: int) -> dict[str, A
         )
     return {
         "status": "pass",
+        "model_variant": model_variant,
         "batch_size": batch_size,
         "gradient_accumulation_steps": accumulation,
         "effective_batch_size": batch_size * accumulation,
@@ -185,7 +196,7 @@ def _resolve_cuda_device(configured_device: str) -> torch.device:
     return device
 
 
-def _assert_full_backbone_trainability(model: HERADGM) -> None:
+def _assert_full_backbone_trainability(model: nn.Module) -> None:
     backbones = model.backbone_modules()
     expected = {"siglip2", "dinov3", "deberta"}
     missing = expected.difference(backbones)
@@ -198,7 +209,7 @@ def _assert_full_backbone_trainability(model: HERADGM) -> None:
             raise RuntimeError(f"Capacity test did not fully unfreeze {name}: {trainable}/{total}")
 
 
-def _backbone_gradient_coverage(model: HERADGM) -> dict[str, dict[str, int]]:
+def _backbone_gradient_coverage(model: nn.Module) -> dict[str, dict[str, int]]:
     coverage: dict[str, dict[str, int]] = {}
     for name, module in model.backbone_modules().items():
         trainable = [parameter for parameter in module.parameters() if parameter.requires_grad]
@@ -265,7 +276,10 @@ def main() -> int:
         batches=args.batches,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
-    validate_hera_config(config, mode="train")
+    if config.get("model", {}).get("model_type") == "hera":
+        validate_hera_config(config, mode="train")
+    else:
+        validate_baseline_config(config, mode="train")
     setup_logging(str(config["logging"]["level"]))
     set_seed(int(config["project"]["seed"]))
     try:
@@ -274,8 +288,14 @@ def main() -> int:
         if "out of memory" not in str(error).lower():
             raise
         torch.cuda.empty_cache()
+        model_variant = (
+            "hera"
+            if config.get("model", {}).get("model_type") == "hera"
+            else str(config["model"]["baseline_type"])
+        )
         report = {
             "status": "oom",
+            "model_variant": model_variant,
             "batch_size": args.batch_size,
             "gradient_accumulation_steps": args.gradient_accumulation_steps,
             "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,

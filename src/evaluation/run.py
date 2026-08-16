@@ -22,6 +22,82 @@ from src.utils.config import dump_yaml
 from src.utils.environment import collect_environment_metadata
 
 
+_MISSING_PATH_MARKERS = ("<run_id>", "RUN")
+
+
+def resolve_baseline_evaluation_artifacts(config: Mapping[str, Any]) -> tuple[Path, Path]:
+    """Resolve a matching checkpoint/threshold pair for the requested B0 or B1 baseline."""
+
+    evaluation = config["evaluation"]
+    checkpoint_path = evaluation.get("checkpoint_path")
+    thresholds_path = evaluation.get("thresholds_path")
+    if _is_explicit_artifact_path(checkpoint_path) and _is_explicit_artifact_path(thresholds_path):
+        return Path(str(checkpoint_path)), Path(str(thresholds_path))
+
+    resolution = evaluation.get("checkpoint_resolution")
+    if not isinstance(resolution, Mapping) or not bool(resolution.get("enabled", False)):
+        raise FileNotFoundError(
+            "Baseline evaluation checkpoint_path/thresholds_path are not explicit. "
+            "Set both paths in YAML, or enable evaluation.checkpoint_resolution."
+        )
+
+    checkpoint_name = str(resolution["checkpoint_name"])
+    thresholds_name = str(resolution["thresholds_name"])
+    mode = str(resolution["mode"])
+    if mode == "run_dir":
+        run_dir_value = resolution.get("run_dir")
+        if run_dir_value in (None, ""):
+            raise ValueError("evaluation.checkpoint_resolution.run_dir is required when mode=run_dir")
+        run_dirs = [Path(str(run_dir_value))]
+    elif mode == "latest":
+        output_root = Path(str(resolution["output_root"]))
+        baseline = str(config["model"]["baseline_type"])
+        seed = int(config["project"]["seed"])
+        prefix = f"{baseline}_seed{seed}_"
+        run_dirs = (
+            [path for path in output_root.iterdir() if path.is_dir() and path.name.startswith(prefix)]
+            if output_root.exists()
+            else []
+        )
+    else:
+        raise ValueError("evaluation.checkpoint_resolution.mode must be latest or run_dir")
+
+    pairs = [
+        (
+            run_dir / "checkpoints" / checkpoint_name,
+            run_dir / "thresholds" / thresholds_name,
+        )
+        for run_dir in run_dirs
+    ]
+    existing = [
+        (checkpoint, thresholds)
+        for checkpoint, thresholds in pairs
+        if checkpoint.is_file() and thresholds.is_file()
+    ]
+    if mode == "latest":
+        existing.sort(
+            key=lambda pair: (
+                pair[0].stat().st_mtime,
+                pair[1].stat().st_mtime,
+                pair[0].as_posix(),
+            ),
+            reverse=True,
+        )
+    if existing:
+        return existing[0]
+    raise FileNotFoundError(
+        "No complete evaluation artifact pair found for "
+        f"{config['model']['baseline_type']}. Expected checkpoints/{checkpoint_name} "
+        f"and thresholds/{thresholds_name}."
+    )
+
+
+def _is_explicit_artifact_path(value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    return not any(marker in str(value) for marker in _MISSING_PATH_MARKERS)
+
+
 def _load_thresholds(path: Path, *, checkpoint_path: Path) -> Thresholds:
     data = json.loads(path.read_text(encoding="utf-8"))
     expected_checkpoint = data.get("checkpoint_path")
@@ -75,10 +151,12 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
     with torch.no_grad():
         with precision.autocast():
             model(move_batch_to_device(raw_batch, device)).validate()
-    checkpoint_path = Path(str(config["evaluation"]["checkpoint_path"]))
+    checkpoint_path, thresholds_path = resolve_baseline_evaluation_artifacts(config)
+    tqdm.write(f"Resolved evaluation checkpoint: {checkpoint_path}")
+    tqdm.write(f"Resolved validation thresholds: {thresholds_path}")
     load_checkpoint(path=checkpoint_path, model=model, restore_rng=False)
     thresholds = _load_thresholds(
-        Path(str(config["evaluation"]["thresholds_path"])),
+        thresholds_path,
         checkpoint_path=checkpoint_path,
     )
     bundle = run_inference(
@@ -106,6 +184,7 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
         "model_name": config["project"]["name"],
         "baseline_type": config["model"]["baseline_type"],
         "seed": config["project"]["seed"],
+        "config_name": str(config.get("project", {}).get("config_name", "evaluate_baseline")),
         "checkpoint": str(checkpoint_path),
         "split": config["evaluation"]["split"],
         "precision_mode": precision.actual,

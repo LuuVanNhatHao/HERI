@@ -67,6 +67,38 @@ def test_stage_freeze_unfreeze_and_optimizer_groups() -> None:
     assert {"new_modules", "siglip2", "dinov3", "deberta"} <= names
 
 
+def test_controlled_baseline_stage_b_full_unfreezes_every_backbone_parameter() -> None:
+    model = B0GlobalFusionBaseline(
+        fusion_dim=16,
+        fusion_hidden_dim=32,
+        head_hidden_dim=16,
+        dropout=0.0,
+        siglip2=TinyBackbone(),
+        dinov3=TinyBackbone(),
+        deberta=TinyBackbone(),
+    )
+    model(synthetic_batch(), features=synthetic_features())
+    cfg = config()
+    cfg["training"]["stages"] = {
+        "stage_a_freeze_epochs": 1,
+        "stage_b_full_unfreeze": {"enabled": True, "start_epoch": 2},
+    }
+
+    apply_training_stage(model, cfg, epoch=1)
+    assert all(
+        not parameter.requires_grad
+        for backbone in model.backbone_modules().values()
+        for parameter in backbone.parameters()
+    )
+
+    apply_training_stage(model, cfg, epoch=2)
+    assert all(
+        parameter.requires_grad
+        for backbone in model.backbone_modules().values()
+        for parameter in backbone.parameters()
+    )
+
+
 def test_optimizer_rejects_unmaterialized_lazy_parameters() -> None:
     model = B0GlobalFusionBaseline(
         fusion_dim=16,

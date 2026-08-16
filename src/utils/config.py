@@ -143,9 +143,6 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
         "training.epochs",
         "training.gradient_accumulation_steps",
         "training.stages.stage_a_freeze_epochs",
-        "training.stages.stage_b_unfreeze_last_blocks.siglip2",
-        "training.stages.stage_b_unfreeze_last_blocks.dinov3",
-        "training.stages.stage_b_unfreeze_last_blocks.deberta",
         "optimizer.type",
         "optimizer.lr_new",
         "optimizer.lr_backbones.siglip2",
@@ -174,6 +171,46 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
                 "evaluation.checkpoint_path",
                 "evaluation.thresholds_path",
                 "evaluation.split",
+                "evaluation.checkpoint_resolution.enabled",
+                "evaluation.checkpoint_resolution.mode",
+                "evaluation.checkpoint_resolution.output_root",
+                "evaluation.checkpoint_resolution.run_dir",
+                "evaluation.checkpoint_resolution.checkpoint_name",
+                "evaluation.checkpoint_resolution.thresholds_name",
+            ]
+        )
+    if mode in {"train", "evaluate"}:
+        mandatory.extend(
+            [
+                "training.micro_batch_size",
+                "training.auto_resume.enabled",
+                "training.auto_resume.run_dir",
+                "training.auto_resume.checkpoint_name",
+                "training.early_stopping.enabled",
+                "training.early_stopping.metric",
+                "training.early_stopping.mode",
+                "training.early_stopping.patience",
+                "training.early_stopping.min_delta",
+                "training.early_stopping.minimum_backbone_adaptation_epochs",
+                "training.stages.stage_b_full_unfreeze.enabled",
+                "training.stages.stage_b_full_unfreeze.start_epoch",
+                "scheduler.resume_horizon_policy",
+                "checkpointing.top_k",
+                "runtime.cuda_memory_logging.enabled",
+                "runtime.gradient_checkpointing.enabled",
+                "runtime.gradient_checkpointing.only_trainable_backbones",
+                "runtime.gradient_checkpointing.use_reentrant",
+                "runtime.gradient_checkpointing.backbones.siglip2",
+                "runtime.gradient_checkpointing.backbones.dinov3",
+                "runtime.gradient_checkpointing.backbones.deberta",
+            ]
+        )
+    else:
+        mandatory.extend(
+            [
+                "training.stages.stage_b_unfreeze_last_blocks.siglip2",
+                "training.stages.stage_b_unfreeze_last_blocks.dinov3",
+                "training.stages.stage_b_unfreeze_last_blocks.deberta",
             ]
         )
     for key in mandatory:
@@ -213,6 +250,65 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("dataloader.batch_size must be positive")
     if int(require_key(config, "dataloader.num_workers")) < 0:
         raise ConfigError("dataloader.num_workers must be non-negative")
+    precision = str(require_key(config, "runtime.precision")).lower()
+    model_dtype = str(require_key(config, "runtime.model_dtype")).lower()
+    if precision in {"bf16", "bfloat16", "fp16", "float16"} and model_dtype not in {"fp32", "float32"}:
+        raise ConfigError(
+            "runtime.model_dtype must be fp32 for AMP training/inference; runtime.precision controls autocast"
+        )
+    if mode in {"train", "evaluate"}:
+        freeze_epochs = int(require_key(config, "training.stages.stage_a_freeze_epochs"))
+        full_unfreeze_enabled = bool(require_key(config, "training.stages.stage_b_full_unfreeze.enabled"))
+        full_unfreeze_start = int(require_key(config, "training.stages.stage_b_full_unfreeze.start_epoch"))
+        if not full_unfreeze_enabled:
+            raise ConfigError("Controlled B0/B1 training requires full-backbone fine-tuning after warm-up")
+        if full_unfreeze_start != freeze_epochs + 1:
+            raise ConfigError(
+                "training.stages.stage_b_full_unfreeze.start_epoch must immediately follow "
+                "training.stages.stage_a_freeze_epochs"
+            )
+        if int(require_key(config, "training.micro_batch_size")) != int(
+            require_key(config, "dataloader.batch_size")
+        ):
+            raise ConfigError("training.micro_batch_size must equal dataloader.batch_size")
+        if str(require_key(config, "training.early_stopping.mode")) not in {"max", "min"}:
+            raise ConfigError("training.early_stopping.mode must be max or min")
+        if int(require_key(config, "training.early_stopping.patience")) < 0:
+            raise ConfigError("training.early_stopping.patience must be non-negative")
+        if float(require_key(config, "training.early_stopping.min_delta")) < 0:
+            raise ConfigError("training.early_stopping.min_delta must be non-negative")
+        if int(require_key(config, "training.early_stopping.minimum_backbone_adaptation_epochs")) < 1:
+            raise ConfigError("training.early_stopping.minimum_backbone_adaptation_epochs must be positive")
+        if str(require_key(config, "scheduler.resume_horizon_policy")) not in {
+            "error",
+            "continue_from_checkpoint_lr",
+        }:
+            raise ConfigError(
+                "scheduler.resume_horizon_policy must be error or continue_from_checkpoint_lr"
+            )
+    if mode == "evaluate":
+        checkpoint_path = require_key(config, "evaluation.checkpoint_path")
+        thresholds_path = require_key(config, "evaluation.thresholds_path")
+        explicit_checkpoint = _is_explicit_evaluation_path(checkpoint_path)
+        explicit_thresholds = _is_explicit_evaluation_path(thresholds_path)
+        if explicit_checkpoint != explicit_thresholds:
+            raise ConfigError(
+                "evaluation.checkpoint_path and evaluation.thresholds_path must both be explicit or both be resolved"
+            )
+        resolution_enabled = bool(require_key(config, "evaluation.checkpoint_resolution.enabled"))
+        if not explicit_checkpoint and not resolution_enabled:
+            raise ConfigError(
+                "evaluation checkpoint paths are missing or contain placeholders; enable evaluation.checkpoint_resolution"
+            )
+        resolution_mode = str(require_key(config, "evaluation.checkpoint_resolution.mode"))
+        if resolution_mode not in {"latest", "run_dir"}:
+            raise ConfigError("evaluation.checkpoint_resolution.mode must be latest or run_dir")
+        if resolution_mode == "run_dir" and require_key(
+            config, "evaluation.checkpoint_resolution.run_dir"
+        ) in (None, ""):
+            raise ConfigError(
+                "evaluation.checkpoint_resolution.run_dir is required when mode=run_dir"
+            )
 
 
 def validate_evidence_config(config: Mapping[str, Any], *, mode: str) -> None:
