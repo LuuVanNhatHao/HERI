@@ -7,6 +7,7 @@ from phase2_fixtures import synthetic_batch, synthetic_features
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.heads.noisy_or import noisy_or_from_probabilities
 from src.models.hera import HERADGM, HERADGMOutput
+from src.training.optimizer import apply_training_stage
 
 
 def _hera_model(routing_enabled: bool = True) -> HERADGM:
@@ -70,6 +71,14 @@ def test_routing_enabled_and_bypass_paths_share_output_contract() -> None:
     assert bypass.metadata["router_batch_summary"]["router"]["enabled"] is False
     assert enabled.atomic_logits.shape == bypass.atomic_logits.shape
     assert bypass.metadata["router_family_mean_reliability"]["face"][0] == 1.0
+
+
+def test_router_parameters_are_frozen_and_excluded_when_bypassed() -> None:
+    model = _hera_model(routing_enabled=False)
+    apply_training_stage(model, hera_test_config(routing_enabled=False), epoch=1)
+
+    assert all(not parameter.requires_grad for parameter in model.router.parameters())
+    assert model.router not in model.new_modules()
 
 
 def test_full_hera_loss_includes_evidence_term_and_mixed_sample_is_finite() -> None:

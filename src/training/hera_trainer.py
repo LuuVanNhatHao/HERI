@@ -17,6 +17,7 @@ from tqdm.auto import tqdm
 from src.compat.transformers_compat import set_gradient_checkpointing
 from src.data.loader import create_dataloader
 from src.evaluation.evaluator import compute_metrics_and_reports, move_batch_to_device, run_inference
+from src.experiments import validate_hera_checkpoint_variant
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADGM
 from src.thresholding.tuner import DEFAULT_THRESHOLDS, Thresholds, tune_thresholds
@@ -208,14 +209,39 @@ class HERATrainer:
         resume_payload: dict[str, Any] | None = None
         start_epoch = 1
         resume_checkpoint_epoch: int | None = None
+        stop_reason = "max_epochs"
         if resume_path:
-            resume_payload = torch.load(resume_path, map_location="cpu", weights_only=False)
+            resume_payload, loaded_resume_path = _load_hera_resume_payload(resume_path)
+            if loaded_resume_path != resume_path:
+                tqdm.write(
+                    f"Primary resume checkpoint was unreadable; recovered from: {loaded_resume_path}"
+                )
+                resume_path = loaded_resume_path
+            checkpoint_config = resume_payload.get("config")
+            if not isinstance(checkpoint_config, Mapping):
+                raise RuntimeError("Resume checkpoint does not contain its effective HERA config")
+            validate_hera_checkpoint_variant(
+                self.config,
+                checkpoint_config,
+                context="Resume",
+            )
             resume_checkpoint_epoch = int(resume_payload["epoch"])
             start_epoch = resume_checkpoint_epoch + 1
             if start_epoch > total_epochs:
-                raise RuntimeError(
-                    f"Resume checkpoint epoch {resume_checkpoint_epoch} already reached configured total_epochs={total_epochs}"
+                best_checkpoint = _completed_checkpoint_best_path(
+                    resume_payload,
+                    run_dir=self.run_dir,
                 )
+                self.state.epoch = resume_checkpoint_epoch
+                self._write_training_completion(
+                    best_checkpoint=best_checkpoint,
+                    stop_reason="max_epochs",
+                )
+                tqdm.write(
+                    "Training checkpoint already reached the configured horizon; "
+                    f"reusing best checkpoint: {best_checkpoint}"
+                )
+                return best_checkpoint
             _persist_resume_config_snapshots(
                 run_dir=self.run_dir,
                 checkpoint=resume_payload,
@@ -344,6 +370,7 @@ class HERATrainer:
                 epoch_metrics=epoch_metrics,
             )
             if early_stop:
+                stop_reason = "early_stopping"
                 tqdm.write(
                     "Early stopping triggered: "
                     f"epoch={epoch}, "
@@ -354,7 +381,31 @@ class HERATrainer:
                 break
         if self.state.best_checkpoint is None:
             raise RuntimeError("HERA training finished without producing a best checkpoint")
+        self._write_training_completion(
+            best_checkpoint=self.state.best_checkpoint,
+            stop_reason=stop_reason,
+        )
         return self.state.best_checkpoint
+
+    def _write_training_completion(
+        self,
+        *,
+        best_checkpoint: Path,
+        stop_reason: str,
+    ) -> None:
+        """Atomically mark a run complete for idempotent suite restarts."""
+
+        payload = {
+            "status": "complete",
+            "final_epoch": int(self.state.epoch),
+            "stop_reason": str(stop_reason),
+            "best_checkpoint": str(best_checkpoint),
+            "ablation_variant": self.model.ablation_variant,
+        }
+        destination = self.run_dir / "training_complete.json"
+        temporary = self.run_dir / ".training_complete.json.tmp"
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temporary.replace(destination)
 
     def _restore_resume_checkpoint(
         self,
@@ -614,6 +665,23 @@ class HERATrainer:
             self.state.best_metric = float(score_tuple[0])
             self.state.best_score = score_tuple
             self.state.best_checkpoint = self.run_dir / "checkpoints" / "best.pt"
+        initial_best_written = False
+        if improved and keep_best and self.state.best_checkpoint is not None:
+            if not self.state.best_checkpoint.is_file():
+                save_checkpoint(
+                    path=self.state.best_checkpoint,
+                    model=self.model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=self.precision.scaler,
+                    state=self.state,
+                    metrics=epoch_metrics,
+                    config=self.config,
+                    precision=self.precision.actual,
+                    scheduler_plan=self._scheduler_plan,
+                )
+                initial_best_written = True
+                tqdm.write(f"Saved initial recovery checkpoint: {self.state.best_checkpoint}")
         last_path = self.run_dir / "checkpoints" / "last.pt"
         if bool(self.config["checkpointing"].get("keep_last", True)):
             save_checkpoint(
@@ -668,19 +736,20 @@ class HERATrainer:
             best_path = self.state.best_checkpoint
             if best_path is None:
                 raise RuntimeError("Best checkpoint path was not initialized")
-            save_checkpoint(
-                path=best_path,
-                model=self.model,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                scaler=self.precision.scaler,
-                state=self.state,
-                metrics=epoch_metrics,
-                config=self.config,
-                precision=self.precision.actual,
-                scheduler_plan=self._scheduler_plan,
-            )
-            tqdm.write(f"Saved best checkpoint: {best_path}")
+            if not initial_best_written:
+                save_checkpoint(
+                    path=best_path,
+                    model=self.model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=self.precision.scaler,
+                    state=self.state,
+                    metrics=epoch_metrics,
+                    config=self.config,
+                    precision=self.precision.actual,
+                    scheduler_plan=self._scheduler_plan,
+                )
+                tqdm.write(f"Saved best checkpoint: {best_path}")
             (self.run_dir / "thresholds" / "best_thresholds.json").write_text(
                 json.dumps(
                     {
@@ -838,6 +907,43 @@ def _persist_resume_config_snapshots(
         history_dir / f"resume_epoch_{resume_epoch + 1:03d}_target_{target_total_epochs:03d}_config.yaml",
     )
     dump_yaml(current_config, run_dir / "effective_config.yaml")
+
+
+def _load_hera_resume_payload(path: Path) -> tuple[dict[str, Any], Path]:
+    """Load last.pt and fall back to best.pt if an interrupted write corrupted it."""
+
+    try:
+        return torch.load(path, map_location="cpu", weights_only=False), path
+    except Exception as primary_error:
+        fallback = path.parent / "best.pt"
+        if fallback == path or not fallback.is_file():
+            raise RuntimeError(f"Failed to load HERA resume checkpoint: {path}") from primary_error
+        try:
+            return torch.load(fallback, map_location="cpu", weights_only=False), fallback
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"Both HERA resume checkpoints are unreadable: {path} and {fallback}"
+            ) from fallback_error
+
+
+def _completed_checkpoint_best_path(
+    checkpoint: Mapping[str, Any],
+    *,
+    run_dir: Path,
+) -> Path:
+    """Resolve the best artifact when a resumed run already reached its horizon."""
+
+    configured = checkpoint.get("best_checkpoint")
+    candidates = []
+    if configured not in (None, ""):
+        candidates.append(Path(str(configured)))
+    candidates.append(run_dir / "checkpoints" / "best.pt")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "Completed HERA checkpoint has no reusable best.pt artifact in its run directory"
+    )
 
 
 def _recover_early_stopping_state(

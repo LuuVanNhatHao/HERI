@@ -9,8 +9,11 @@ from torch import nn
 
 from src.graph.outputs import HypothesisGraphOutput
 from src.graph.schema import HYPOTHESIS_ORDER
+from src.models.heads.binary import IndependentHypothesisBinaryHead
 from src.models.heads.attribution import HypothesisAttributionHead
 from src.models.heads.hypothesis_grounding import (
+    GenericImageGroundingHead,
+    GenericTextGroundingHead,
     HypothesisConditionedImageGroundingHead,
     HypothesisConditionedTextGroundingHead,
 )
@@ -38,8 +41,12 @@ class HERADecisionModule(nn.Module):
         image_config = model_config["grounding"]["image"]
         text_config = model_config["grounding"]["text"]
         binary_config = model_config["binary"]
-        if str(binary_config["aggregation"]) != "noisy_or":
-            raise ValueError("Canonical HERA binary aggregation must be noisy_or")
+        self.grounding_mode = str(model_config["grounding"].get("mode", "hypothesis_conditioned"))
+        if self.grounding_mode not in {"hypothesis_conditioned", "generic"}:
+            raise ValueError("model.grounding.mode must be hypothesis_conditioned or generic")
+        self.binary_aggregation = str(binary_config["aggregation"])
+        if self.binary_aggregation not in {"noisy_or", "independent_head"}:
+            raise ValueError("model.binary.aggregation must be noisy_or or independent_head")
         if not bool(text_config["full_token_store"]):
             raise ValueError("Phase-5 text grounding requires model.grounding.text.full_token_store=true")
 
@@ -48,17 +55,34 @@ class HERADecisionModule(nn.Module):
             dropout=float(attribution_config["dropout"]),
         )
         self.noisy_or = StableNoisyOR()
-        self.image_grounding_head = HypothesisConditionedImageGroundingHead(
-            hidden_dim=hidden_dim,
-            dropout=float(image_config["dropout"]),
-            scoring=str(image_config["scoring"]),
-        )
-        self.text_grounding_head = HypothesisConditionedTextGroundingHead(
-            hidden_dim=hidden_dim,
-            token_input_dim=int(text_config["token_input_dim"]),
-            dropout=float(text_config["dropout"]),
-            scoring=str(text_config["scoring"]),
-        )
+        if self.grounding_mode == "generic":
+            self.image_grounding_head = GenericImageGroundingHead(
+                hidden_dim=hidden_dim,
+                dropout=float(image_config["dropout"]),
+            )
+            self.text_grounding_head = GenericTextGroundingHead(
+                hidden_dim=hidden_dim,
+                token_input_dim=int(text_config["token_input_dim"]),
+                dropout=float(text_config["dropout"]),
+            )
+        else:
+            self.image_grounding_head = HypothesisConditionedImageGroundingHead(
+                hidden_dim=hidden_dim,
+                dropout=float(image_config["dropout"]),
+                scoring=str(image_config["scoring"]),
+            )
+            self.text_grounding_head = HypothesisConditionedTextGroundingHead(
+                hidden_dim=hidden_dim,
+                token_input_dim=int(text_config["token_input_dim"]),
+                dropout=float(text_config["dropout"]),
+                scoring=str(text_config["scoring"]),
+            )
+        if self.binary_aggregation == "independent_head":
+            self.binary_head = IndependentHypothesisBinaryHead(
+                hidden_dim=hidden_dim,
+                hypotheses=len(HYPOTHESIS_ORDER),
+                dropout=float(attribution_config["dropout"]),
+            )
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "HERADecisionModule":
@@ -79,6 +103,12 @@ class HERADecisionModule(nn.Module):
             graph_output.hypothesis_mask,
         )
         noisy_or_output = self.noisy_or(atomic_logits)
+        if self.binary_aggregation == "independent_head":
+            binary_logit = self.binary_head(graph_output.hypothesis_features)
+            binary_probability = torch.sigmoid(binary_logit)
+        else:
+            binary_logit = noisy_or_output.binary_logit
+            binary_probability = noisy_or_output.binary_probability
         image_logits, image_probabilities, image_mask = self.image_grounding_head(
             hypothesis_features=graph_output.hypothesis_features,
             face_evidence=graph_output.refined_face,
@@ -97,8 +127,8 @@ class HERADecisionModule(nn.Module):
         output = HERADecisionOutput(
             atomic_logits=atomic_logits,
             atomic_probabilities=noisy_or_output.atomic_probabilities,
-            binary_probability=noisy_or_output.binary_probability,
-            binary_logit=noisy_or_output.binary_logit,
+            binary_probability=binary_probability,
+            binary_logit=binary_logit,
             image_grounding_logits=image_logits,
             image_grounding_probabilities=image_probabilities,
             image_grounding_mask=image_mask,
@@ -112,8 +142,9 @@ class HERADecisionModule(nn.Module):
                 "hypothesis_order": list(HYPOTHESIS_ORDER),
                 "image_grounding_order": ["FS", "FA"],
                 "text_grounding_order": ["TS", "TA"],
-                "binary_aggregation": "noisy_or",
-                "binary_shortcut": False,
+                "binary_aggregation": self.binary_aggregation,
+                "binary_shortcut": self.binary_aggregation == "independent_head",
+                "grounding_mode": self.grounding_mode,
             },
             evidence_support=evidence_support,
         )
@@ -128,7 +159,10 @@ class HERADecisionModule(nn.Module):
     def new_modules(self) -> list[nn.Module]:
         """Return trainable non-backbone modules for future optimizer grouping."""
 
-        return [self.attribution_head, self.image_grounding_head, self.text_grounding_head]
+        modules = [self.attribution_head, self.image_grounding_head, self.text_grounding_head]
+        if hasattr(self, "binary_head"):
+            modules.append(self.binary_head)
+        return modules
 
 
 def _absolute_grounding_support(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

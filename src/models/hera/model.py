@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from src.evidence import EvidenceStructuralMetadata, HeterogeneousEvidenceExtractor
+from src.experiments import get_hera_ablation_variant
 from src.graph import HypothesisEvidenceGraphReasoner
 from src.models.baselines.base import BaselineBackboneMixin, finite_or_fail
 from src.models.baselines.factory import build_backbones
@@ -50,6 +51,7 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
     ) -> None:
         super().__init__()
         self.config = config
+        self.ablation_variant = get_hera_ablation_variant(config)
         backbones = build_backbones(config) if load_backbones else {}
         self.siglip2 = siglip2 if siglip2 is not None else backbones.get("siglip2")
         self.dinov3 = dinov3 if dinov3 is not None else backbones.get("dinov3")
@@ -60,6 +62,8 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
             else HeterogeneousEvidenceExtractor.from_config(config)
         )
         self.router = router if router is not None else EvidenceReliabilityRouter.from_config(config)
+        if not bool(getattr(self.router, "enabled", True)):
+            self.router.requires_grad_(False)
         self.graph_reasoner = (
             graph_reasoner
             if graph_reasoner is not None
@@ -111,7 +115,10 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
     def new_modules(self) -> list[nn.Module]:
         """Return all trainable non-backbone HERA modules for optimizer grouping."""
 
-        return [self.evidence_extractor, self.router, self.graph_reasoner, self.decision]
+        modules = [self.evidence_extractor, self.graph_reasoner, self.decision]
+        if bool(getattr(self.router, "enabled", True)):
+            modules.insert(1, self.router)
+        return modules
 
     def hera_component_modules(self) -> dict[str, nn.Module]:
         """Return Phase-7 component groups for parameter audits."""
@@ -122,7 +129,16 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
             "graph_reasoner": self.graph_reasoner,
             "decision": self.decision,
         }
-        if hasattr(self.graph_reasoner, "hgt"):
+        if hasattr(self.graph_reasoner, "graph_encoder_module"):
+            graph_encoder = self.graph_reasoner.graph_encoder_module()
+            if (
+                getattr(self.graph_reasoner, "graph_type", None) == "hgt"
+                and getattr(self.graph_reasoner, "evidence_mode", None) == "heterogeneous"
+            ):
+                modules["hgt"] = graph_encoder
+            else:
+                modules["graph_encoder"] = graph_encoder
+        elif hasattr(self.graph_reasoner, "hgt"):
             modules["hgt"] = self.graph_reasoner.hgt
         if hasattr(self.graph_reasoner, "hypotheses"):
             modules["hypothesis_embeddings"] = self.graph_reasoner.hypotheses
@@ -143,7 +159,10 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
                 continue
             terminal_name = module_name.rsplit(".", 1)[-1].lower()
             class_name = module.__class__.__name__.lower()
-            if class_name == "binaryhead" or terminal_name in {"binary_head", "binary_classifier"}:
+            if class_name in {"binaryhead", "independenthypothesisbinaryhead"} or terminal_name in {
+                "binary_head",
+                "binary_classifier",
+            }:
                 count += 1
         return count
 
@@ -151,9 +170,11 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
         """Fail if a direct Real/Fake classifier appears in the HERA module tree."""
 
         shortcut_count = self.count_independent_binary_shortcuts()
-        if shortcut_count:
+        expected = 1 if self.ablation_variant == "independent_binary" else 0
+        if shortcut_count != expected:
             raise ValueError(
-                f"Canonical HERADGM must not contain an independent binary head; found {shortcut_count}"
+                "HERA binary shortcut count violates the experiment contract: "
+                f"variant={self.ablation_variant!r}, expected={expected}, found={shortcut_count}"
             )
 
     def _to_hera_output(
@@ -165,18 +186,29 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
         graph_output: Any,
     ) -> HERADGMOutput:
         metadata = dict(decision_output.metadata)
+        graph_label = {
+            "gatv2": "GATv2",
+            "homogeneous_evidence": "HomogeneousEvidenceHGT",
+        }.get(self.ablation_variant, "HGT")
+        router_label = "UniformEvidenceBypass" if self.ablation_variant == "no_router" else "EvidenceReliabilityRouter"
+        binary_label = (
+            "IndependentHypothesisBinaryHead"
+            if self.ablation_variant == "independent_binary"
+            else "StableNoisyOR"
+        )
         metadata.update(
             {
                 "model_type": "hera_dgm",
+                "ablation_variant": self.ablation_variant,
                 "pipeline": [
                     "SigLIP2",
                     "DINOv3",
                     "DeBERTa",
                     "HeterogeneousEvidenceExtractor",
-                    "EvidenceReliabilityRouter",
-                    "HGT",
+                    router_label,
+                    graph_label,
                     "HERADecisionModule",
-                    "StableNoisyOR",
+                    binary_label,
                 ],
                 "router_family_mean_reliability": _router_family_mean_reliability(routed),
                 "router_batch_summary": _router_batch_summary(self.config, routed),
@@ -214,6 +246,11 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
             graph_metadata={
                 "statistics": dict(graph_output.graph_statistics),
                 "reasoning_cycles": len(graph_output.intermediate_hypothesis_features),
+                "graph_type": str(self.config["graph"]["type"]),
+                "evidence_mode": str(self.config["graph"].get("evidence_mode", "heterogeneous")),
+                "hypothesis_feedback": bool(
+                    self.config["graph"]["reasoning"]["hypothesis_feedback"]
+                ),
             },
             cross_modal_alignment_loss=evidence.cross_modal_metadata.alignment_loss,
             router_regularization_loss=routed.regularization_loss,

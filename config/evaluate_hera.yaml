@@ -123,6 +123,7 @@ routing:
 
 graph:
   type: hgt
+  evidence_mode: heterogeneous
   hidden_dim: 512
   layers: 2
   heads: 8
@@ -164,6 +165,7 @@ model:
     hidden_dim: 512
     dropout: 0.1
   grounding:
+    mode: hypothesis_conditioned
     image:
       scoring: dot_product
       dropout: 0.1

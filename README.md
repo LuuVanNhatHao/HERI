@@ -62,3 +62,64 @@ python scripts/dataloader_benchmark.py config/train_hera.yaml \
 
 Use the reported `best_num_workers` only when it improves end-to-end training
 `samples/s`; the complete HERA full-fine-tune remains primarily GPU-bound.
+
+## Controlled HERA ablations
+
+The production ablation suite reuses the canonical DGM4 split, three-stage
+fine-tuning protocol, optimizer, scheduler, thresholds, and final test
+evaluation. It contains six HERA-only experiments; B0 and B1 are deliberately
+excluded because they are reported as standalone baselines:
+
+- `no_router`;
+- `homogeneous_evidence`;
+- `gatv2`;
+- `no_hypothesis_feedback`;
+- `generic_grounding`;
+- `independent_binary`.
+
+Validate and materialize all effective configs on a CPU machine without
+loading any backbone or starting CUDA:
+
+```bash
+python scripts/run_hera_ablation.py \
+  config/experiments/hera_ablation.yaml \
+  --dry-run
+```
+
+On the training server, verify the real installed PyG graph operators with
+small synthetic CPU tensors before committing GPU time. This test does not
+download or load SigLIP2, DINOv3, DeBERTa, or DGM4:
+
+```bash
+python -m pytest -q \
+  tests/test_hera_ablation_config.py \
+  tests/test_hera_ablation_components.py
+```
+
+Run the complete suite sequentially on the GPU server:
+
+```bash
+python scripts/run_hera_ablation.py config/experiments/hera_ablation.yaml
+```
+
+Run or resume one variant, then evaluate it separately if needed:
+
+```bash
+python scripts/run_hera_ablation.py \
+  config/experiments/hera_ablation.yaml \
+  --variants no_router \
+  --phase train
+
+python scripts/run_hera_ablation.py \
+  config/experiments/hera_ablation.yaml \
+  --variants no_router \
+  --phase evaluate
+```
+
+Every variant owns an isolated directory under `outputs/hera_ablation/`.
+Training auto-resume therefore cannot select another variant's checkpoint.
+Evaluation rows are combined into `outputs/hera_ablation/ablation_summary.csv`.
+Rerunning the same command resumes an interrupted variant from its latest
+`last.pt`, skips variants with a valid `training_complete.json`, and skips an
+evaluation whose `summary.csv` already exists. Checkpoints are written after
+each epoch, so an interruption in the middle of an epoch repeats that epoch.

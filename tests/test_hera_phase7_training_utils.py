@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from src.training.hera_trainer import (
     _cuda_memory_summary,
     _early_stopping_improved,
     _ensure_finite_losses,
+    _load_hera_resume_payload,
     _stage_name,
     _recover_early_stopping_state,
     _resolve_hera_resume_checkpoint,
@@ -40,6 +42,42 @@ def _stage_model() -> HERADGM:
         graph_reasoner=FixtureGraphReasoner(hidden_dim=12),
         load_backbones=False,
     )
+
+
+def test_training_completion_marker_is_atomic_and_variant_bound(tmp_path: Path) -> None:
+    trainer = object.__new__(HERATrainer)
+    trainer.run_dir = tmp_path
+    trainer.state = TrainingState(epoch=8)
+    trainer.model = SimpleNamespace(ablation_variant="no_router")
+    best = tmp_path / "checkpoints" / "best.pt"
+    best.parent.mkdir(parents=True)
+    best.write_bytes(b"fixture")
+
+    trainer._write_training_completion(
+        best_checkpoint=best,
+        stop_reason="early_stopping",
+    )
+
+    payload = json.loads((tmp_path / "training_complete.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "complete"
+    assert payload["final_epoch"] == 8
+    assert payload["stop_reason"] == "early_stopping"
+    assert payload["ablation_variant"] == "no_router"
+    assert not (tmp_path / ".training_complete.json.tmp").exists()
+
+
+def test_corrupt_last_checkpoint_falls_back_to_best(tmp_path: Path) -> None:
+    checkpoint_dir = tmp_path / "checkpoints"
+    checkpoint_dir.mkdir()
+    last = checkpoint_dir / "last.pt"
+    best = checkpoint_dir / "best.pt"
+    last.write_bytes(b"interrupted checkpoint write")
+    torch.save({"epoch": 4, "config": {"model": {"model_type": "hera"}}}, best)
+
+    payload, recovered_path = _load_hera_resume_payload(last)
+
+    assert recovered_path == best
+    assert payload["epoch"] == 4
 
 
 class CheckpointableTinyBackbone(TinyBackbone):

@@ -72,7 +72,10 @@ class HERAMultitaskLoss:
             raise ValueError("binary_target must align with derived binary_logit [B]")
 
         attribution = F.binary_cross_entropy_with_logits(output.atomic_logits, atomic_target)
-        binary = target_consistent_noisy_or_loss(output.atomic_logits, atomic_target, binary_target)
+        if output.metadata.get("binary_aggregation") == "independent_head":
+            binary = F.binary_cross_entropy_with_logits(output.binary_logit, binary_target)
+        else:
+            binary = target_consistent_noisy_or_loss(output.atomic_logits, atomic_target, binary_target)
         image_grounding = hypothesis_image_grounding_loss(output, batch, atomic_target=atomic_target)
         text_grounding = hypothesis_text_grounding_loss(output, batch, atomic_target=atomic_target)
         evidence = evidence_sufficiency_loss(output)

@@ -612,7 +612,7 @@ def validate_routing_config(config: Mapping[str, Any], *, mode: str) -> None:
 
 
 def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
-    """Validate canonical Phase-7 HERA train/evaluate/smoke configuration."""
+    """Validate canonical HERA or one registered production ablation."""
 
     mandatory = [
         "project.name",
@@ -780,10 +780,36 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
     for key in ("evidence.hidden_dim", "routing.feature_dim", "graph.hidden_dim", "model.attribution.hidden_dim"):
         if int(require_key(config, key)) != hidden_dim:
             raise ConfigError(f"{key} must match model.hidden_dim")
-    if str(require_key(config, "graph.type")).lower() != "hgt":
-        raise ConfigError("graph.type must be hgt for canonical HERA")
-    if str(require_key(config, "model.binary.aggregation")) != "noisy_or":
-        raise ConfigError("model.binary.aggregation must be noisy_or")
+    ablation = config.get("ablation", {})
+    ablation_enabled = isinstance(ablation, Mapping) and bool(ablation.get("enabled", False))
+    graph_type = str(require_key(config, "graph.type")).lower()
+    evidence_mode = str(config["graph"].get("evidence_mode", "heterogeneous")).lower()
+    grounding_mode = str(config["model"]["grounding"].get("mode", "hypothesis_conditioned"))
+    binary_aggregation = str(require_key(config, "model.binary.aggregation"))
+    if ablation_enabled:
+        from src.experiments import validate_hera_ablation_contract
+
+        try:
+            validate_hera_ablation_contract(config)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+    else:
+        if graph_type != "hgt":
+            raise ConfigError("graph.type must be hgt for canonical HERA")
+        if evidence_mode != "heterogeneous":
+            raise ConfigError("graph.evidence_mode must be heterogeneous for canonical HERA")
+        if grounding_mode != "hypothesis_conditioned":
+            raise ConfigError("model.grounding.mode must be hypothesis_conditioned for canonical HERA")
+        if binary_aggregation != "noisy_or":
+            raise ConfigError("model.binary.aggregation must be noisy_or")
+    if graph_type not in {"hgt", "gatv2"}:
+        raise ConfigError("graph.type must be hgt or gatv2")
+    if evidence_mode not in {"heterogeneous", "homogeneous"}:
+        raise ConfigError("graph.evidence_mode must be heterogeneous or homogeneous")
+    if grounding_mode not in {"hypothesis_conditioned", "generic"}:
+        raise ConfigError("model.grounding.mode must be hypothesis_conditioned or generic")
+    if binary_aggregation not in {"noisy_or", "independent_head"}:
+        raise ConfigError("model.binary.aggregation must be noisy_or or independent_head")
     if not bool(require_key(config, "model.grounding.text.full_token_store")):
         raise ConfigError("model.grounding.text.full_token_store must be true")
     freeze_epochs = int(require_key(config, "training.stages.stage_a_freeze_epochs"))
@@ -837,6 +863,12 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
     high = float(require_key(config, "routing.diagnostics.high_threshold"))
     if low < 0 or high > 1 or low >= high:
         raise ConfigError("routing diagnostics thresholds must satisfy 0 <= low < high <= 1")
+    regularization_enabled = bool(require_key(config, "routing.regularization.enabled"))
+    regularization_weight = float(require_key(config, "routing.regularization.weight"))
+    if regularization_enabled and regularization_weight <= 0:
+        raise ConfigError("routing.regularization.weight must be positive when enabled")
+    if not regularization_enabled and regularization_weight != 0.0:
+        raise ConfigError("routing.regularization.weight must be 0.0 when disabled")
     if mode == "evaluate":
         resolution = require_key(config, "evaluation.checkpoint_resolution")
         resolution_enabled = bool(require_key(config, "evaluation.checkpoint_resolution.enabled"))

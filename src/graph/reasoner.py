@@ -11,6 +11,7 @@ from torch import nn
 from src.evidence.outputs import EvidenceSet, HeterogeneousEvidenceBatch
 
 from .adapters import TypedEvidenceFeatureAdapters
+from .ablations import GATv2GraphEncoder, HomogeneousEvidenceHGTEncoder
 from .builder import HypothesisEvidenceGraphBuilder
 from .hgt import HGTGraphEncoder
 from .hypotheses import HypothesisNodeInitializer
@@ -21,13 +22,19 @@ from .validation import graph_statistics
 
 
 class HypothesisEvidenceGraphReasoner(nn.Module):
-    """Real HGT-based reasoning from evidence nodes to hypothesis states."""
+    """Production graph reasoning for canonical HGT and controlled ablations."""
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__()
-        if str(config["type"]).lower() != "hgt":
-            raise ValueError("Phase-4 canonical graph.type must be hgt")
         self.config = dict(config)
+        self.graph_type = str(config["type"]).lower()
+        self.evidence_mode = str(config.get("evidence_mode", "heterogeneous")).lower()
+        if self.graph_type not in {"hgt", "gatv2"}:
+            raise ValueError("graph.type must be hgt or gatv2")
+        if self.evidence_mode not in {"heterogeneous", "homogeneous"}:
+            raise ValueError("graph.evidence_mode must be heterogeneous or homogeneous")
+        if self.graph_type == "gatv2" and self.evidence_mode != "heterogeneous":
+            raise ValueError("The GATv2 ablation cannot be combined with homogeneous_evidence")
         self.hidden_dim = int(config["hidden_dim"])
         self.cycles = int(config["reasoning"]["cycles"])
         if self.cycles < 1 or self.cycles > 2:
@@ -38,12 +45,21 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             hidden_dim=self.hidden_dim,
             input_dims=config.get("input_dims", {}),
         )
-        self.hgt = HGTGraphEncoder(
-            hidden_dim=self.hidden_dim,
-            layers=int(config["layers"]),
-            heads=int(config["heads"]),
-            dropout=float(config["dropout"]),
-        )
+        encoder_kwargs = {
+            "hidden_dim": self.hidden_dim,
+            "layers": int(config["layers"]),
+            "heads": int(config["heads"]),
+            "dropout": float(config["dropout"]),
+        }
+        if self.graph_type == "gatv2":
+            self.gatv2 = GATv2GraphEncoder(**encoder_kwargs)
+            self._encoder_name = "gatv2"
+        elif self.evidence_mode == "homogeneous":
+            self.homogeneous_hgt = HomogeneousEvidenceHGTEncoder(**encoder_kwargs)
+            self._encoder_name = "homogeneous_hgt"
+        else:
+            self.hgt = HGTGraphEncoder(**encoder_kwargs)
+            self._encoder_name = "hgt"
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "HypothesisEvidenceGraphReasoner":
@@ -61,7 +77,8 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         x_dict = dict(graph.x_dict)
         intermediate: list[torch.Tensor] = []
         for _ in range(self.cycles):
-            x_dict = self.hgt(x_dict, graph.edge_index_dict, graph.edge_attr_dict)
+            encoder = getattr(self, self._encoder_name)
+            x_dict = encoder(x_dict, graph.edge_index_dict, graph.edge_attr_dict)
             intermediate.append(_unflatten_hypotheses(x_dict[HYPOTHESIS], batch_size=batch_size))
         hypothesis_features = intermediate[-1]
         output = HypothesisGraphOutput(
@@ -109,6 +126,11 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         )
         output.validate()
         return output
+
+    def graph_encoder_module(self) -> nn.Module:
+        """Return the active graph encoder for parameter accounting."""
+
+        return getattr(self, self._encoder_name)
 
 
 def _unflatten_hypotheses(features: torch.Tensor, *, batch_size: int) -> torch.Tensor:

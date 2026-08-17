@@ -98,6 +98,7 @@ class HypothesisEvidenceGraphBuilder:
             metadata={
                 "reasoning_cycles": int(self.config["reasoning"]["cycles"]),
                 "hypothesis_feedback": self.feedback_enabled,
+                "evidence_mode": str(self.config.get("evidence_mode", "heterogeneous")),
             },
         )
         graph.validate()

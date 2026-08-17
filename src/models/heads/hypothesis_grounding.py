@@ -140,6 +140,86 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
         return stacked_logits, probabilities, mask
 
 
+class GenericImageGroundingHead(nn.Module):
+    """Ground manipulated faces without receiving manipulation hypotheses."""
+
+    def __init__(self, *, hidden_dim: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.hidden_dim = int(hidden_dim)
+        self.candidate_scorer = nn.Sequential(
+            nn.LayerNorm(self.hidden_dim),
+            nn.Dropout(float(dropout)),
+            nn.Linear(self.hidden_dim, 1),
+        )
+
+    def forward(
+        self,
+        *,
+        hypothesis_features: torch.Tensor,
+        face_evidence: EvidenceSet,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        _validate_hypotheses(hypothesis_features, self.hidden_dim)
+        face_evidence.validate()
+        features = face_evidence.features
+        if features.shape[0] != hypothesis_features.shape[0] or features.shape[-1] != self.hidden_dim:
+            raise ValueError("face_evidence must be [B,N_face,D] and align with hypotheses")
+        mask = face_evidence.mask.to(torch.bool)
+        generic_logits = self.candidate_scorer(features).squeeze(-1)
+        logits = generic_logits.unsqueeze(1).expand(-1, len(IMAGE_HYPOTHESIS_INDICES), -1)
+        logits = logits.masked_fill(~mask.unsqueeze(1), -1e4)
+        probabilities = _masked_softmax(logits, mask.unsqueeze(1))
+        return logits, probabilities, mask
+
+
+class GenericTextGroundingHead(nn.Module):
+    """Ground manipulated tokens without receiving TS/TA hypotheses."""
+
+    def __init__(self, *, hidden_dim: int, token_input_dim: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        if int(token_input_dim) <= 0:
+            raise ValueError("token_input_dim must be positive")
+        self.hidden_dim = int(hidden_dim)
+        self.token_input_dim = int(token_input_dim)
+        self.token_scorer = nn.Sequential(
+            nn.LayerNorm(self.token_input_dim),
+            nn.Linear(self.token_input_dim, self.hidden_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)),
+            nn.Linear(self.hidden_dim, 1),
+        )
+
+    def forward(
+        self,
+        *,
+        hypothesis_features: torch.Tensor,
+        text_context: EvidenceSet,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        _validate_hypotheses(hypothesis_features, self.hidden_dim)
+        text_context.validate()
+        if text_context.full_features is None or text_context.full_word_ids is None:
+            raise ValueError("Generic text grounding requires the full DeBERTa token store")
+        full_features = text_context.full_features
+        if full_features.shape[0] != hypothesis_features.shape[0]:
+            raise ValueError("text_context full store batch size must match hypotheses")
+        if full_features.shape[-1] != self.token_input_dim:
+            raise ValueError(
+                f"text_context.full_features must end in {self.token_input_dim}, "
+                f"got {full_features.shape[-1]}"
+            )
+        full_mask = (
+            torch.ones(full_features.shape[:2], dtype=torch.bool, device=full_features.device)
+            if text_context.full_mask is None
+            else text_context.full_mask.to(torch.bool)
+        )
+        word_mask = text_context.full_word_ids.to(full_features.device) != PAD_WORD_ID
+        mask = full_mask & word_mask
+        generic_logits = self.token_scorer(full_features).squeeze(-1)
+        logits = generic_logits.unsqueeze(1).expand(-1, len(TEXT_HYPOTHESIS_INDICES), -1)
+        logits = logits.masked_fill(~mask.unsqueeze(1), -1e4)
+        probabilities = torch.sigmoid(logits).masked_fill(~mask.unsqueeze(1), 0.0)
+        return logits, probabilities, mask
+
+
 def _validate_hypotheses(hypothesis_features: torch.Tensor, hidden_dim: int) -> None:
     if hypothesis_features.ndim != 3:
         raise ValueError(f"hypothesis_features must be [B,4,D], got {tuple(hypothesis_features.shape)}")

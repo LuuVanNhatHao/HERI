@@ -14,6 +14,7 @@ from src.data.loader import create_dataloader
 from src.evaluation.evaluator import compute_metrics_and_reports, run_inference
 from src.evaluation.run import _load_thresholds
 from src.evaluation.summary import write_predictions_csv, write_summary_csv
+from src.experiments import get_hera_ablation_variant, validate_hera_checkpoint_variant
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADGM
 from src.training.checkpoint import load_checkpoint
@@ -136,7 +137,15 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     checkpoint_path, thresholds_path = resolve_hera_evaluation_artifacts(config)
     tqdm.write(f"Resolved evaluation checkpoint: {checkpoint_path}")
     tqdm.write(f"Resolved validation thresholds: {thresholds_path}")
-    load_checkpoint(path=checkpoint_path, model=model, restore_rng=False)
+    checkpoint = load_checkpoint(path=checkpoint_path, model=model, restore_rng=False)
+    checkpoint_config = checkpoint.get("config")
+    if not isinstance(checkpoint_config, Mapping):
+        raise RuntimeError("Evaluation checkpoint does not contain its effective HERA config")
+    validate_hera_checkpoint_variant(
+        config,
+        checkpoint_config,
+        context="Evaluation",
+    )
     ensure_no_uninitialized_parameters(model, context="HERA evaluation checkpoint load")
     thresholds = _load_thresholds(thresholds_path, checkpoint_path=checkpoint_path)
     bundle = run_inference(
@@ -163,19 +172,22 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         json.dumps(bundle.router_batch_summaries, indent=2, default=str),
         encoding="utf-8",
     )
+    ablation_variant = get_hera_ablation_variant(config)
+    training_micro_batch = int(checkpoint_config["dataloader"]["batch_size"])
+    training_accumulation = int(checkpoint_config["training"]["gradient_accumulation_steps"])
     run_info = {
         "run_id": run_id,
         "model_name": config["project"]["name"],
-        "model_variant": "hera",
+        "model_variant": f"hera_{ablation_variant}" if ablation_variant else "hera",
+        "ablation_variant": ablation_variant or "canonical",
         "seed": config["project"]["seed"],
         "checkpoint": str(checkpoint_path),
         "split": config["evaluation"]["split"],
         "config_name": str(config.get("project", {}).get("config_name", "evaluate_hera")),
         "precision_mode": precision.actual,
-        "micro_batch_size": config["dataloader"]["batch_size"],
-        "gradient_accumulation_steps": config["training"]["gradient_accumulation_steps"],
-        "effective_batch_size": int(config["dataloader"]["batch_size"])
-        * int(config["training"]["gradient_accumulation_steps"]),
+        "micro_batch_size": training_micro_batch,
+        "gradient_accumulation_steps": training_accumulation,
+        "effective_batch_size": training_micro_batch * training_accumulation,
         "peak_vram": torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None,
         "training_duration": None,
         "git_commit": environment.get("git_commit"),

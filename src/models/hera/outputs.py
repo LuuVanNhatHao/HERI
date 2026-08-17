@@ -104,16 +104,25 @@ class HERADGMOutput(HERADecisionOutput):
     router_regularization_loss: torch.Tensor | None = None
 
     def validate(self) -> None:
-        """Validate the complete HERA output and Noisy-OR authenticity contract."""
+        """Validate canonical or explicitly controlled ablation decision contracts."""
 
         super().validate()
-        expected_binary = 1.0 - torch.prod(1.0 - self.atomic_probabilities, dim=1)
-        if not torch.allclose(self.binary_probability, expected_binary, atol=1e-5, rtol=1e-5):
-            raise ValueError("binary_probability must be derived from atomic probabilities by StableNoisyOR")
-        if self.metadata.get("binary_shortcut") is not False:
-            raise ValueError("HERADGMOutput metadata must record binary_shortcut=False")
-        if self.metadata.get("binary_aggregation") != "noisy_or":
-            raise ValueError("HERADGMOutput metadata must record binary_aggregation='noisy_or'")
+        aggregation = self.metadata.get("binary_aggregation")
+        if aggregation == "noisy_or":
+            expected_binary = 1.0 - torch.prod(1.0 - self.atomic_probabilities, dim=1)
+            if not torch.allclose(self.binary_probability, expected_binary, atol=1e-5, rtol=1e-5):
+                raise ValueError("binary_probability must be derived from atomic probabilities by StableNoisyOR")
+            if self.metadata.get("binary_shortcut") is not False:
+                raise ValueError("Noisy-OR output must record binary_shortcut=False")
+        elif aggregation == "independent_head":
+            if self.metadata.get("binary_shortcut") is not True:
+                raise ValueError("Independent binary ablation must record binary_shortcut=True")
+            if not torch.allclose(self.binary_probability, torch.sigmoid(self.binary_logit), atol=1e-6, rtol=1e-6):
+                raise ValueError("Independent binary probability must be sigmoid(binary_logit)")
+            if self.metadata.get("ablation_variant") != "independent_binary":
+                raise ValueError("independent_head is legal only for the independent_binary ablation")
+        else:
+            raise ValueError(f"Unsupported binary aggregation metadata: {aggregation!r}")
         for name in ("cross_modal_alignment_loss", "router_regularization_loss"):
             value = getattr(self, name)
             if value is not None and (value.ndim != 0 or not torch.isfinite(value)):
