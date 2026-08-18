@@ -69,7 +69,7 @@ loss:
     text_grounding: 1.0
 
 training:
-  epochs: 20
+  epochs: 12
   micro_batch_size: 16
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
