@@ -1,0 +1,258 @@
+project:
+  name: HERA-MultiBanFakeDetect
+  seed: 42
+  config_name: benchmark_multibanfakedetect
+
+task:
+  type: binary_multimodal
+  primary_target: label
+  negative_name: non-fake
+  positive_name: fake
+  signals:
+    binary: true
+    attribution: false
+    image_grounding: false
+    text_grounding: false
+    subtype: false
+    text_label: false
+
+dataset:
+  name: MultiBanFakeDetect
+  adapter: multibanfakedetect
+  split_protocol: official_80_10_10
+  cross_split_duplicate_policy: report_only
+  preflight: {full_decode: true}
+  root: data/MultiBanFakeDetect
+  train_csv: Train.csv
+  val_csv: Validation.csv
+  test_csv: Test.csv
+  train_images: Train
+  val_images: Validation
+  test_images: Test
+  verify_image_exists: true
+  artifacts_dir: outputs/benchmark_preflight
+  text:
+    fields: [headline, description]
+    separator: "\n\n"
+
+image:
+  size: 384
+  preserve_aspect_ratio: true
+  padding: true
+
+tokenizer:
+  enabled: true
+  name: FacebookAI/xlm-roberta-large
+  use_fast: true
+  max_length: 256
+  local_files_only: false
+  ignore_index: -100
+
+backbones:
+  siglip2:
+    name: google/siglip2-so400m-patch14-384
+    revision:
+    local_files_only: false
+    trust_remote_code: false
+    image_mean: [0.5, 0.5, 0.5]
+    image_std: [0.5, 0.5, 0.5]
+    text_max_length: 64
+  dinov3:
+    name: facebook/dinov3-vitl16-pretrain-lvd1689m
+    revision:
+    local_files_only: false
+    trust_remote_code: false
+    image_mean: [0.485, 0.456, 0.406]
+    image_std: [0.229, 0.224, 0.225]
+  deberta:
+    name: FacebookAI/xlm-roberta-large
+    revision:
+    local_files_only: false
+    trust_remote_code: false
+
+evidence:
+  hidden_dim: 512
+  activation: gelu
+  layer_norm: true
+  dropout: 0.1
+  input_dims:
+    visual_semantic:
+    visual_forensic:
+    face:
+    text_alignment:
+    text_context:
+  visual_semantic:
+    enabled: true
+    max_nodes: 96
+    budgeting: saliency_spatial
+  visual_forensic:
+    enabled: true
+    max_nodes: 96
+    budgeting: forensic_saliency
+  face:
+    enabled: false
+    truncate: false
+    max_nodes:
+    budgeting: ordered
+  text_alignment:
+    enabled: true
+    max_nodes: 64
+    budgeting: saliency_sequence
+  text_context:
+    enabled: true
+    max_nodes: 128
+    budgeting: saliency_sequence
+  cross_modal:
+    enabled: true
+    similarity: cosine
+
+routing:
+  enabled: true
+  mode: soft
+  feature_dim: 512
+  estimator:
+    hidden_dim: 128
+    dropout: 0.1
+    initial_bias: 1.0
+    output_weight_std: 0.001
+  visual_semantic: {enabled: true}
+  visual_forensic: {enabled: true}
+  face: {enabled: false}
+  text_alignment: {enabled: true}
+  text_context: {enabled: true}
+  hard_eval:
+    enabled: false
+    threshold: 0.5
+  diagnostics:
+    low_threshold: 0.25
+    high_threshold: 0.75
+  regularization:
+    enabled: true
+    target_mean: 0.75
+    min_std: 0.05
+
+graph:
+  type: hgt
+  evidence_mode: heterogeneous
+  hidden_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.1
+  hypothesis_init_std: 0.02
+  input_dims:
+    visual_semantic:
+    visual_forensic:
+    face:
+    text_alignment:
+    text_context:
+  reasoning:
+    cycles: 1
+    hypothesis_feedback: true
+  edges:
+    visual_semantic_visual_forensic: {method: spatial_knn, k: 4, bidirectional: true}
+    visual_semantic_text_alignment: {method: similarity_topk, k: 4, bidirectional: true}
+    text_alignment_text_context: {method: word_aligned, bidirectional: true}
+    semantic_to_hypotheses: {enabled: true}
+    feedback: {enabled: true, semantic_feedback: false}
+
+model:
+  model_type: hera_binary_benchmark
+  hidden_dim: 512
+  latent_slots:
+    count: 4
+    roles: [visual_slot_1, visual_slot_2, text_slot_1, text_slot_2]
+  binary:
+    aggregation: independent_head
+    dropout: 0.1
+
+loss:
+  lambda_bin: 1.0
+  lambda_align: 0.1
+  lambda_router: 0.05
+  lambda_subtype: 0.0
+  lambda_text_label: 0.0
+
+training:
+  epochs: 12
+  micro_batch_size: 4
+  gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+  resume_from:
+  auto_resume:
+    enabled: true
+    run_dir:
+    checkpoint_name: last.pt
+  early_stopping:
+    enabled: true
+    metric: macro_f1
+    mode: max
+    patience: 3
+    min_delta: 0.001
+    minimum_backbone_adaptation_epochs: 3
+  stages:
+    stage_a_freeze_epochs: 3
+    stage_b_full_unfreeze: {enabled: true, start_epoch: 4}
+
+optimizer:
+  type: adamw
+  lr_new: 0.0001
+  lr_backbones: {siglip2: 0.000002, dinov3: 0.000002, deberta: 0.000002}
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 0.00000001
+  foreach: false
+
+scheduler:
+  type: linear_warmup
+  warmup_steps: 250
+  resume_horizon_policy: continue_from_checkpoint_lr
+
+thresholding:
+  binary: {objective: macro_f1, min: 0.05, max: 0.95, step: 0.01}
+
+checkpointing:
+  selection_metric: macro_f1
+  keep_last: true
+  keep_best: true
+  best_weights_only: true
+  atomic_write: true
+  minimum_free_gib: 20
+
+dataloader:
+  batch_size: 4
+  num_workers: 16
+  worker_threads: 1
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  shuffle: {train: true, val: false, test: false}
+  drop_last: false
+  seed: 42
+
+runtime:
+  device: cuda
+  precision: bf16
+  model_dtype: fp32
+  cuda_memory_logging: {enabled: true}
+  attn_implementation:
+  gradient_checkpointing:
+    enabled: true
+    only_trainable_backbones: true
+    use_reentrant: false
+    backbones: {siglip2: true, dinov3: true, deberta: true}
+  max_train_batches:
+  max_val_batches:
+  max_test_batches:
+  fail_on_nan: true
+  gradient_audit: {enabled: true, minimum_element_coverage: 0.95}
+
+evaluation:
+  split: test
+  checkpoint_path:
+  run_dir:
+  binary_threshold:
+  output_dir:
+
+progress: {enabled: true}
+logging: {level: INFO}
+output: {root: outputs/benchmarks/multibanfakedetect}

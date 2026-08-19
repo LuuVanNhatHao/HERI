@@ -123,3 +123,50 @@ Rerunning the same command resumes an interrupted variant from its latest
 `last.pt`, skips variants with a valid `training_complete.json`, and skips an
 evaluation whose `summary.csv` already exists. Checkpoints are written after
 each epoch, so an interruption in the middle of an epoch repeats that epoch.
+
+## Binary multimodal benchmarks
+
+MultiBanFakeDetect and VLDBench use a separate task-aware delivery. It reuses
+the production HERA backbone, evidence extraction, reliability routing, HGT,
+and iterative hypothesis reasoning, but interprets the four graph states as
+latent evidence slots. It does not instantiate or supervise DGM4 attribution
+and grounding heads. Dataset-native auxiliary signals (`subtype` for
+MultiBanFakeDetect and `text_label` for VLDBench) are independently gated by
+`task.signals` and matching loss weights; both are off in the canonical YAMLs.
+
+Prepare and audit the real releases before training:
+
+```bash
+python scripts/prepare_binary_benchmark.py config/benchmark_multibanfakedetect.yaml
+python scripts/prepare_binary_benchmark.py config/benchmark_vldbench.yaml
+```
+
+VLDBench ships as one Parquet split, so preparation creates a deterministic,
+image-hash-grouped 70/15/15 manifest. MultiBanFakeDetect preserves its official
+80/10/10 protocol for prior-work comparability and records its released
+cross-split duplicates in the audit report instead of silently changing it.
+
+On the GPU server, test the exact full-fine-tune workload without writing a
+checkpoint, then train/evaluate:
+
+```bash
+python scripts/binary_benchmark_capacity_test.py \
+  config/benchmark_multibanfakedetect.yaml \
+  --batch-size 4 --batches 2 --gradient-accumulation-steps 1
+
+python scripts/train_binary_benchmark.py config/benchmark_multibanfakedetect.yaml
+python scripts/evaluate_binary_benchmark.py config/benchmark_multibanfakedetect.yaml
+
+python scripts/binary_benchmark_capacity_test.py \
+  config/benchmark_vldbench.yaml \
+  --batch-size 2 --batches 2 --gradient-accumulation-steps 1
+
+python scripts/train_binary_benchmark.py config/benchmark_vldbench.yaml
+python scripts/evaluate_binary_benchmark.py config/benchmark_vldbench.yaml
+```
+
+Each YAML owns an output root and auto-resumes from its newest `last.pt`.
+Stage A freezes every backbone for three epochs; Stage B fully unfreezes all
+three backbones. The first Stage-B backward pass writes a gradient-coverage
+audit proving that the full backbones, rather than only their last blocks,
+receive gradients.
