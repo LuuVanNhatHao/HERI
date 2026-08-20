@@ -62,29 +62,11 @@ def graph_output_from_evidence(
         updated_node_features=graph.x_dict,
         refined_visual_semantic=evidence.visual_semantic,
         refined_visual_forensic=evidence.visual_forensic,
-        refined_face=evidence.face,
         refined_text_alignment=evidence.text_alignment,
         refined_text_context=evidence.text_context,
     )
     output.validate()
     return output
-
-
-def zero_face_graph_output(hidden_dim: int = 12) -> HypothesisGraphOutput:
-    evidence = synthetic_evidence(hidden_dim=hidden_dim)
-    batch = evidence.face.features.shape[0]
-    empty_face = replace(
-        evidence.face,
-        features=evidence.face.features.new_zeros((batch, 0, hidden_dim)),
-        mask=torch.zeros((batch, 0), dtype=torch.bool),
-        source_indices=torch.zeros((batch, 0), dtype=torch.long),
-        spatial_centers=None,
-        spatial_boxes=None,
-        normalized_centers=None,
-        normalized_boxes=None,
-    )
-    evidence = replace(evidence, face=empty_face)
-    return graph_output_from_evidence(evidence, hidden_dim=hidden_dim)
 
 
 def full_text_graph_output(

@@ -54,15 +54,15 @@ def test_cross_sample_isolation_and_sample_a_stability() -> None:
         assert torch.allclose(graph.x_dict[node_type][sample_zero], changed_graph.x_dict[node_type][changed_sample_zero])
 
 
-def test_zero_face_family_does_not_fabricate_nodes() -> None:
+def test_removed_face_family_does_not_exist_in_graph() -> None:
     config = graph_config()
     evidence = synthetic_evidence()
-    assert evidence.face.features.shape[1] == 0
+    assert "face" not in evidence.families()
     graph = HypothesisEvidenceGraphBuilder(config).build(
         evidence,
         HypothesisNodeInitializer(config)(batch_size=3),
     )
 
-    assert graph.x_dict["face"].shape == (0, 12)
+    assert "face" not in graph.x_dict
     assert graph.x_dict["hypothesis"].shape == (12, 12)
     graph.validate()

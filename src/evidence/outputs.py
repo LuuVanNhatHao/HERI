@@ -203,7 +203,6 @@ class HeterogeneousEvidenceBatch:
 
     visual_semantic: EvidenceSet
     visual_forensic: EvidenceSet
-    face: EvidenceSet
     text_alignment: EvidenceSet
     text_context: EvidenceSet
     cross_modal_metadata: CrossModalMetadata = field(default_factory=CrossModalMetadata)
@@ -214,7 +213,6 @@ class HeterogeneousEvidenceBatch:
         return {
             "visual_semantic": self.visual_semantic,
             "visual_forensic": self.visual_forensic,
-            "face": self.face,
             "text_alignment": self.text_alignment,
             "text_context": self.text_context,
         }

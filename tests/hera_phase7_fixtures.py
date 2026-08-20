@@ -15,7 +15,7 @@ def hera_test_config(hidden_dim: int = 12, *, routing_enabled: bool = True) -> d
     loss = decision_config(hidden_dim=hidden_dim, token_input_dim=19)["loss"]
     loss["lambda_ev"] = 0.0
     return {
-        "project": {"architecture_version": "hera_final_v1"},
+        "project": {"architecture_version": "hera_final_v2"},
         "evidence": evidence_config(hidden_dim=hidden_dim),
         "routing": routing_config(hidden_dim=hidden_dim, enabled=routing_enabled)["routing"],
         "graph": graph_config(hidden_dim=hidden_dim),

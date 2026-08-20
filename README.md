@@ -2,7 +2,7 @@
 
 HERA-DGM is governed by the frozen Phase 0 Constitution in `docs/HERA_DGM_CONSTITUTION.md`.
 
-## Final protocol (`hera_final_v1`)
+## Final protocol (`hera_final_v2`)
 
 The final implementation intentionally breaks compatibility with earlier
 checkpoints. It never supplies DGM4 `mtcnn_boxes` to a model, predicts image

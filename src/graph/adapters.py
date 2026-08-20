@@ -71,10 +71,6 @@ class TypedEvidenceFeatureAdapters(nn.Module):
                 evidence.visual_forensic,
                 features=self.adapters["visual_forensic"](evidence.visual_forensic.features),
             ),
-            face=replace(
-                evidence.face,
-                features=self.adapters["face"](evidence.face.features),
-            ),
             text_alignment=replace(
                 evidence.text_alignment,
                 features=self.adapters["text_alignment"](evidence.text_alignment.features),

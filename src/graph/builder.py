@@ -19,7 +19,6 @@ from .edges import (
 )
 from .outputs import GraphBatch
 from .schema import (
-    FACE,
     HYPOTHESIS,
     HYPOTHESIS_TO_INDEX,
     SEMANTIC_ALIGNS,
@@ -34,7 +33,6 @@ from .schema import (
     VISUAL_FORENSIC,
     VISUAL_SEMANTIC,
     CANONICAL_EDGE_TYPES,
-    QUERIES_FACE,
     QUERIES_TEXT_ALIGNMENT,
     QUERIES_TEXT_CONTEXT,
     QUERIES_VISUAL_FORENSIC,
@@ -77,7 +75,6 @@ class HypothesisEvidenceGraphBuilder:
         stores = {
             VISUAL_SEMANTIC: _evidence_store(evidence.visual_semantic, hidden_dim=self.hidden_dim),
             VISUAL_FORENSIC: _evidence_store(evidence.visual_forensic, hidden_dim=self.hidden_dim),
-            FACE: _evidence_store(evidence.face, hidden_dim=self.hidden_dim),
             TEXT_ALIGNMENT: _evidence_store(evidence.text_alignment, hidden_dim=self.hidden_dim),
             TEXT_CONTEXT: _evidence_store(evidence.text_context, hidden_dim=self.hidden_dim),
             HYPOTHESIS: _hypothesis_store(hypothesis_features),
@@ -246,7 +243,6 @@ class HypothesisEvidenceGraphBuilder:
     ) -> None:
         for source_type, evidence_set, hypotheses in (
             (VISUAL_FORENSIC, evidence.visual_forensic, ("FS", "FA")),
-            (FACE, evidence.face, ("FS", "FA")),
             (TEXT_CONTEXT, evidence.text_context, ("TS", "TA")),
         ):
             for hypothesis in hypotheses:
@@ -301,7 +297,6 @@ class HypothesisEvidenceGraphBuilder:
     ) -> None:
         feedback_config = self.edge_config.get("feedback", {})
         for edge_type, evidence_set, hypotheses in (
-            ((HYPOTHESIS, QUERIES_FACE, FACE), evidence.face, ("FS", "FA")),
             ((HYPOTHESIS, QUERIES_VISUAL_FORENSIC, VISUAL_FORENSIC), evidence.visual_forensic, ("FS", "FA")),
             ((HYPOTHESIS, QUERIES_TEXT_CONTEXT, TEXT_CONTEXT), evidence.text_context, ("TS", "TA")),
         ):

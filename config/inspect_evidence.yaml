@@ -60,7 +60,6 @@ evidence:
   input_dims:
     visual_semantic:
     visual_forensic:
-    face:
     text_alignment:
     text_context:
   visual_semantic:
@@ -71,11 +70,6 @@ evidence:
     enabled: true
     max_nodes: 64
     budgeting: spatial_balanced
-  face:
-    enabled: false
-    truncate: false
-    max_nodes:
-    budgeting: ordered
   text_alignment:
     enabled: true
     max_nodes: 32

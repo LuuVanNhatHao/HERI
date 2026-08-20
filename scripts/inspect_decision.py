@@ -105,7 +105,9 @@ def _summary(batch_index: int, output: Any, batch: dict[str, Any]) -> dict[str, 
         "binary_probability_shape": list(output.binary_probability.shape),
         "noisy_or_max_abs_error": float(torch.max(torch.abs(reference_fake - output.binary_probability.float())).cpu()),
         "image_grounding_shape": list(output.image_grounding_logits.shape),
-        "valid_faces_per_sample": [int(v) for v in output.image_grounding_mask.sum(dim=1).detach().cpu().tolist()],
+        "valid_image_patches_per_sample": [
+            int(v) for v in output.image_grounding_mask.sum(dim=1).detach().cpu().tolist()
+        ],
         "text_grounding_shape": list(output.text_grounding_logits.shape),
         "valid_full_tokens_per_sample": [int(v) for v in output.text_grounding_mask.sum(dim=1).detach().cpu().tolist()],
         "word_id_min": int(valid_word_ids.min().cpu()) if valid_word_ids.numel() else None,
@@ -125,7 +127,7 @@ def _print_summary(record: dict[str, Any]) -> None:
     print(f"binary_probability_shape: {record['binary_probability_shape']}")
     print(f"noisy_or_max_abs_error: {record['noisy_or_max_abs_error']:.8f}")
     print(f"image_grounding_shape: {record['image_grounding_shape']}")
-    print(f"valid_faces_per_sample: {record['valid_faces_per_sample']}")
+    print(f"valid_image_patches_per_sample: {record['valid_image_patches_per_sample']}")
     print(f"text_grounding_shape: {record['text_grounding_shape']}")
     print(f"valid_full_tokens_per_sample: {record['valid_full_tokens_per_sample']}")
     print(f"word_id_range: {record['word_id_min']}..{record['word_id_max']}")

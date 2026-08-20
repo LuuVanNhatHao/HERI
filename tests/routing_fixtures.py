@@ -19,7 +19,6 @@ def routing_config(hidden_dim: int = 12, *, enabled: bool = True, mode: str = "s
             },
             "visual_semantic": {"enabled": True},
             "visual_forensic": {"enabled": True},
-            "face": {"enabled": True},
             "text_alignment": {"enabled": True},
             "text_context": {"enabled": True},
             "hard_eval": {"enabled": mode == "hard", "threshold": 0.5},
@@ -33,7 +32,6 @@ def minimal_evidence(hidden_dim: int = 2) -> HeterogeneousEvidenceBatch:
     return HeterogeneousEvidenceBatch(
         visual_semantic=_evidence_set("visual_semantic", hidden_dim=hidden_dim),
         visual_forensic=_evidence_set("visual_forensic", hidden_dim=hidden_dim),
-        face=_evidence_set("face", hidden_dim=hidden_dim, spatial=True),
         text_alignment=_evidence_set("text_alignment", hidden_dim=hidden_dim, words=True),
         text_context=_text_context_set(hidden_dim=hidden_dim),
         cross_modal_metadata=CrossModalMetadata(method="disabled"),

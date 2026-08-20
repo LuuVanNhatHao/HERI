@@ -16,19 +16,18 @@ def test_graph_schema_and_hypothesis_order_are_frozen() -> None:
     assert NODE_TYPES == (
         "visual_semantic",
         "visual_forensic",
-        "face",
         "text_alignment",
         "text_context",
         "hypothesis",
     )
     assert HYPOTHESIS_ORDER == ("FS", "FA", "TS", "TA")
-    assert ("face", "supports_fs", "hypothesis") in CANONICAL_EDGE_TYPES
+    assert all("face" not in edge_type for edge_type in CANONICAL_EDGE_TYPES)
     assert ("text_context", "supports_ta", "hypothesis") in CANONICAL_EDGE_TYPES
 
 
 def test_unknown_relation_fails_fast() -> None:
     with pytest.raises(ValueError, match="Unknown graph edge type"):
-        validate_edge_type(("face", "edge_1", "hypothesis"))
+        validate_edge_type(("unknown", "edge_1", "hypothesis"))
 
 
 def test_unknown_edge_config_key_fails_fast() -> None:

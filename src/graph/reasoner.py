@@ -17,7 +17,7 @@ from .hgt import HGTGraphEncoder
 from .hypotheses import HypothesisNodeInitializer
 from .outputs import HypothesisGraphOutput
 from .schema import HYPOTHESIS, HYPOTHESIS_ORDER
-from .schema import FACE, TEXT_ALIGNMENT, TEXT_CONTEXT, VISUAL_FORENSIC, VISUAL_SEMANTIC
+from .schema import TEXT_ALIGNMENT, TEXT_CONTEXT, VISUAL_FORENSIC, VISUAL_SEMANTIC
 from .validation import graph_statistics
 
 
@@ -113,7 +113,6 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             intermediate_hypothesis_features=intermediate,
             refined_visual_semantic=current_evidence.visual_semantic,
             refined_visual_forensic=current_evidence.visual_forensic,
-            refined_face=current_evidence.face,
             refined_text_alignment=current_evidence.text_alignment,
             refined_text_context=current_evidence.text_context,
         )
@@ -163,12 +162,6 @@ def _refined_evidence_batch(
             graph.node_sample_indices[VISUAL_FORENSIC],
             graph.node_local_indices[VISUAL_FORENSIC],
             x_dict[VISUAL_FORENSIC],
-        ),
-        face=_refined_evidence_set(
-            evidence.face,
-            graph.node_sample_indices[FACE],
-            graph.node_local_indices[FACE],
-            x_dict[FACE],
         ),
         text_alignment=_refined_evidence_set(
             evidence.text_alignment,

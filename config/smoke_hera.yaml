@@ -1,7 +1,7 @@
 project:
   name: HERA-DGM
   seed: 42
-  architecture_version: hera_final_v1
+  architecture_version: hera_final_v2
   config_name: smoke_hera
 
 dataset:
@@ -63,7 +63,6 @@ evidence:
   input_dims:
     visual_semantic:
     visual_forensic:
-    face:
     text_alignment:
     text_context:
   visual_semantic:
@@ -74,11 +73,6 @@ evidence:
     enabled: true
     max_nodes: 32
     budgeting: forensic_saliency
-  face:
-    enabled: false
-    truncate: false
-    max_nodes:
-    budgeting: ordered
   text_alignment:
     enabled: true
     max_nodes: 16
@@ -104,8 +98,6 @@ routing:
     enabled: true
   visual_forensic:
     enabled: true
-  face:
-    enabled: false
   text_alignment:
     enabled: true
   text_context:
@@ -132,7 +124,6 @@ graph:
   input_dims:
     visual_semantic:
     visual_forensic:
-    face:
     text_alignment:
     text_context:
   reasoning:

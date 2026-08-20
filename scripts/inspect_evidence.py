@@ -87,7 +87,7 @@ def _encode(backbones: dict[str, torch.nn.Module], batch: dict[str, Any]) -> Bac
 
 def _print_summary(batch_index: int, summary: dict[str, Any]) -> None:
     print(f"batch_index: {batch_index}")
-    for family in ("visual_semantic", "visual_forensic", "face", "text_alignment", "text_context"):
+    for family in ("visual_semantic", "visual_forensic", "text_alignment", "text_context"):
         family_summary = summary[family]
         print(f"{family}:")
         print(f"  feature_shape: {family_summary['feature_shape']}")

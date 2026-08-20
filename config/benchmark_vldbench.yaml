@@ -1,7 +1,7 @@
 project:
   name: HERA-VLDBench
   seed: 42
-  architecture_version: hera_binary_final_v1
+  architecture_version: hera_binary_final_v2
   config_name: benchmark_vldbench
 
 task:
@@ -81,12 +81,10 @@ evidence:
   input_dims:
     visual_semantic:
     visual_forensic:
-    face:
     text_alignment:
     text_context:
   visual_semantic: {enabled: true, max_nodes: 96, budgeting: saliency_spatial}
   visual_forensic: {enabled: true, max_nodes: 96, budgeting: forensic_saliency}
-  face: {enabled: false, truncate: false, max_nodes: null, budgeting: ordered}
   text_alignment: {enabled: true, max_nodes: 64, budgeting: saliency_sequence}
   text_context: {enabled: true, max_nodes: 128, budgeting: saliency_sequence}
   cross_modal: {enabled: true, similarity: cosine}
@@ -98,7 +96,6 @@ routing:
   estimator: {hidden_dim: 128, dropout: 0.1, initial_bias: 1.0, output_weight_std: 0.001}
   visual_semantic: {enabled: true}
   visual_forensic: {enabled: true}
-  face: {enabled: false}
   text_alignment: {enabled: true}
   text_context: {enabled: true}
   hard_eval: {enabled: false, threshold: 0.5}
@@ -116,7 +113,6 @@ graph:
   input_dims:
     visual_semantic:
     visual_forensic:
-    face:
     text_alignment:
     text_context:
   reasoning:

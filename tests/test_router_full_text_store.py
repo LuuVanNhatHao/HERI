@@ -15,7 +15,6 @@ def test_router_preserves_full_text_store_for_phase5_grounding() -> None:
     batch = HeterogeneousEvidenceBatch(
         visual_semantic=evidence.refined_visual_semantic,
         visual_forensic=evidence.refined_visual_forensic,
-        face=evidence.refined_face,
         text_alignment=evidence.refined_text_alignment,
         text_context=original,
         cross_modal_metadata=CrossModalMetadata(method="disabled"),

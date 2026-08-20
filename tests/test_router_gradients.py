@@ -28,7 +28,6 @@ def test_downstream_phase5_loss_backpropagates_to_router_parameters() -> None:
         updated_node_features=graph.x_dict,
         refined_visual_semantic=routed_evidence.visual_semantic,
         refined_visual_forensic=routed_evidence.visual_forensic,
-        refined_face=routed_evidence.face,
         refined_text_alignment=routed_evidence.text_alignment,
         refined_text_context=routed_evidence.text_context,
     )

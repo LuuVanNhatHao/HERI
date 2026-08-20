@@ -15,13 +15,11 @@ def test_full_heterogeneous_evidence_contract() -> None:
     evidence.validate()
     assert evidence.visual_semantic.features.shape == (3, 3, 12)
     assert evidence.visual_forensic.features.shape == (3, 3, 12)
-    assert evidence.face.features.shape == (3, 0, 12)
-    assert evidence.face.provenance["source"] == "disabled"
+    assert "face" not in evidence.families()
     assert evidence.text_alignment.features.shape == (3, 3, 12)
     assert evidence.text_context.features.shape == (3, 3, 12)
     assert evidence.visual_semantic.source_indices.tolist()[0] == [0, 2, 3]
     assert evidence.visual_forensic.source_indices.tolist()[0] == [0, 2, 3]
-    assert evidence.face.source_indices.tolist() == [[], [], []]
     assert evidence.text_context.word_ids.tolist()[2] == [0, 2, 3]
     assert evidence.text_context.full_features is features.deberta.token_features
     assert evidence.cross_modal_metadata.similarity.shape == (3, 3, 3)
@@ -40,6 +38,5 @@ def test_extractor_ignores_legacy_candidate_face_fields() -> None:
 
     evidence = extractor(synthetic_features(), EvidenceStructuralMetadata.from_batch(batch))
 
-    assert evidence.face.features.shape == (3, 0, 12)
-    assert evidence.face.mask.shape == (3, 0)
+    assert "face" not in evidence.families()
     evidence.validate()

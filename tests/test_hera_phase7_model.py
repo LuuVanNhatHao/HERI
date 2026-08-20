@@ -70,7 +70,7 @@ def test_routing_enabled_and_bypass_paths_share_output_contract() -> None:
     assert enabled.metadata["router_batch_summary"]["router"]["enabled"] is True
     assert bypass.metadata["router_batch_summary"]["router"]["enabled"] is False
     assert enabled.atomic_logits.shape == bypass.atomic_logits.shape
-    assert bypass.metadata["router_family_mean_reliability"]["face"][0] == 0.0
+    assert "face" not in bypass.metadata["router_family_mean_reliability"]
 
 
 def test_router_parameters_are_frozen_and_excluded_when_bypassed() -> None:

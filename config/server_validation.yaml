@@ -54,8 +54,8 @@ validation:
           command: [python, scripts/evidence_smoke.py, config/smoke_evidence.yaml]
           required_for_training: true
           expected_pass_criteria:
-            - All five evidence families are produced with finite projected features.
-            - DINO local patch features, MTCNN face pooling, and full text provenance validate.
+            - All four final evidence families are produced with finite projected features.
+            - DINO local patch/residual features and full text provenance validate.
             - No target field is consumed by evidence extraction.
     - name: phase4_graph
       output_file: phase4.json

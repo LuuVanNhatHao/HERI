@@ -81,11 +81,10 @@ class RoutedEvidenceSet:
 
 @dataclass
 class RoutedEvidenceBatch:
-    """All five Phase-6 routed evidence families plus preserved cross-modal metadata."""
+    """All four routed evidence families plus preserved cross-modal metadata."""
 
     visual_semantic: RoutedEvidenceSet
     visual_forensic: RoutedEvidenceSet
-    face: RoutedEvidenceSet
     text_alignment: RoutedEvidenceSet
     text_context: RoutedEvidenceSet
     cross_modal_metadata: CrossModalMetadata
@@ -99,7 +98,6 @@ class RoutedEvidenceBatch:
         return {
             "visual_semantic": self.visual_semantic,
             "visual_forensic": self.visual_forensic,
-            "face": self.face,
             "text_alignment": self.text_alignment,
             "text_context": self.text_context,
         }
@@ -127,7 +125,6 @@ class RoutedEvidenceBatch:
         return HeterogeneousEvidenceBatch(
             visual_semantic=self.visual_semantic.as_evidence_set(),
             visual_forensic=self.visual_forensic.as_evidence_set(),
-            face=self.face.as_evidence_set(),
             text_alignment=self.text_alignment.as_evidence_set(),
             text_context=self.text_context.as_evidence_set(),
             cross_modal_metadata=self.cross_modal_metadata,

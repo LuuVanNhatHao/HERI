@@ -90,7 +90,6 @@ class HypothesisGraphOutput:
     intermediate_hypothesis_features: list[torch.Tensor] = field(default_factory=list)
     refined_visual_semantic: EvidenceSet | None = None
     refined_visual_forensic: EvidenceSet | None = None
-    refined_face: EvidenceSet | None = None
     refined_text_alignment: EvidenceSet | None = None
     refined_text_context: EvidenceSet | None = None
 
@@ -120,7 +119,6 @@ class HypothesisGraphOutput:
         for name in (
             "refined_visual_semantic",
             "refined_visual_forensic",
-            "refined_face",
             "refined_text_alignment",
             "refined_text_context",
         ):

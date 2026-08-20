@@ -19,6 +19,8 @@ def validate_binary_benchmark_config(
 
     if mode not in {"prepare", "train", "evaluate"}:
         raise ConfigError(f"Unknown binary benchmark mode: {mode!r}")
+    if "face" in config.get("evidence", {}) or "face" in config.get("routing", {}):
+        raise ConfigError("Binary HERA forbids the removed face evidence/router family")
     required = [
         "project.name",
         "project.seed",
@@ -128,8 +130,8 @@ def validate_binary_benchmark_config(
 
     if str(require_key(config, "task.type")) != PRIMARY_TASK:
         raise ConfigError(f"task.type must be {PRIMARY_TASK!r}")
-    if str(require_key(config, "project.architecture_version")) != "hera_binary_final_v1":
-        raise ConfigError("Binary benchmark architecture_version must be hera_binary_final_v1")
+    if str(require_key(config, "project.architecture_version")) != "hera_binary_final_v2":
+        raise ConfigError("Binary benchmark architecture_version must be hera_binary_final_v2")
     adapter = str(require_key(config, "dataset.adapter")).strip().casefold()
     if adapter not in SUPPORTED_DATASETS:
         raise ConfigError(

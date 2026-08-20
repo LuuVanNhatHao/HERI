@@ -53,18 +53,11 @@ class HeterogeneousEvidenceExtractor(nn.Module):
 
         visual_semantic = config["visual_semantic"]
         visual_forensic = config["visual_forensic"]
-        face = config["face"]
-        if bool(face.get("enabled", False)):
-            raise ValueError(
-                "Final HERA removed annotation-derived MTCNN face evidence; "
-                "set evidence.face.enabled=false"
-            )
         text_alignment = config["text_alignment"]
         text_context = config["text_context"]
         self.enabled = {
             "visual_semantic": bool(visual_semantic.get("enabled", True)),
             "visual_forensic": bool(visual_forensic.get("enabled", True)),
-            "face": bool(face.get("enabled", True)),
             "text_alignment": bool(text_alignment.get("enabled", True)),
             "text_context": bool(text_context.get("enabled", True)),
         }
@@ -123,7 +116,6 @@ class HeterogeneousEvidenceExtractor(nn.Module):
             if self.enabled["visual_forensic"]
             else _empty_evidence("visual_forensic", batch_size, self.hidden_dim, device=device, dtype=dtype)
         )
-        face = _empty_evidence("face", batch_size, self.hidden_dim, device=device, dtype=dtype)
         text_alignment = (
             self.text_alignment_extractor(encoder_outputs.siglip2)
             if self.enabled["text_alignment"]
@@ -147,7 +139,6 @@ class HeterogeneousEvidenceExtractor(nn.Module):
         evidence = HeterogeneousEvidenceBatch(
             visual_semantic=visual_semantic,
             visual_forensic=visual_forensic,
-            face=face,
             text_alignment=text_alignment,
             text_context=text_context,
             cross_modal_metadata=cross_modal,

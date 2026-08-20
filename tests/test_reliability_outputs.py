@@ -11,7 +11,7 @@ def test_routed_output_preserves_all_families_and_shapes() -> None:
     evidence = synthetic_evidence(hidden_dim=12)
     routed = EvidenceReliabilityRouter(routing_config(hidden_dim=12))(evidence)
     routed.validate()
-    assert set(routed.families()) == {"visual_semantic", "visual_forensic", "face", "text_alignment", "text_context"}
+    assert set(routed.families()) == {"visual_semantic", "visual_forensic", "text_alignment", "text_context"}
     for name, routed_set in routed.families().items():
         original = evidence.families()[name]
         assert routed_set.original_features.shape == original.features.shape

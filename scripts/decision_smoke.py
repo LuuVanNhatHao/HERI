@@ -143,7 +143,9 @@ def _diagnostics(batch_index: int, output: Any, losses: Any) -> dict[str, Any]:
         "binary_probability_shape": list(output.binary_probability.shape),
         "image_grounding_shape": list(output.image_grounding_logits.shape),
         "text_grounding_shape": list(output.text_grounding_logits.shape),
-        "valid_faces_per_sample": [int(v) for v in output.image_grounding_mask.sum(dim=1).detach().cpu().tolist()],
+        "valid_image_patches_per_sample": [
+            int(v) for v in output.image_grounding_mask.sum(dim=1).detach().cpu().tolist()
+        ],
         "valid_full_tokens_per_sample": [int(v) for v in output.text_grounding_mask.sum(dim=1).detach().cpu().tolist()],
         "noisy_or_max_abs_error": float(noisy_or_error.detach().cpu()),
         "mean_p_fs": float(output.atomic_probabilities[:, 0].detach().float().mean().cpu()),

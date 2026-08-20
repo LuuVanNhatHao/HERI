@@ -81,11 +81,11 @@ def test_binary_hera_uses_fusion_reasoning_without_dgm4_decision_heads() -> None
     output.validate()
 
 
-def test_binary_hera_real_hgt_path_handles_intentionally_disabled_face_signal() -> None:
+def test_binary_hera_real_hgt_path_uses_final_four_family_schema() -> None:
     pytest.importorskip("torch_geometric")
     config = _binary_config()
-    config["evidence"]["face"]["enabled"] = False
-    config["routing"]["face"]["enabled"] = False
+    assert "face" not in config["evidence"]
+    assert "face" not in config["routing"]
     model = BinaryBenchmarkHERA(config, load_backbones=False).eval()
 
     output = model(_batch(), features=synthetic_features())

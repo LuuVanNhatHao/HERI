@@ -50,10 +50,8 @@ def apply_hera_ablation_variant(config: Mapping[str, Any], variant: str) -> dict
     _set(result, "ablation.variant", variant)
 
     # Explicit canonical defaults make generated effective configs self-contained.
-    _set(result, "project.architecture_version", "hera_final_v1")
+    _set(result, "project.architecture_version", "hera_final_v2")
     _set(result, "dataset.use_mtcnn_boxes", False)
-    _set(result, "evidence.face.enabled", False)
-    _set(result, "routing.face.enabled", False)
     _set(result, "graph.type", "hgt")
     _set(result, "graph.evidence_mode", "heterogeneous")
     _set(result, "graph.reasoning.hypothesis_feedback", True)
@@ -102,10 +100,8 @@ def validate_hera_ablation_contract(config: Mapping[str, Any]) -> None:
         )
 
     expected = {
-        "project.architecture_version": "hera_final_v1",
+        "project.architecture_version": "hera_final_v2",
         "dataset.use_mtcnn_boxes": False,
-        "evidence.face.enabled": False,
-        "routing.face.enabled": False,
         "graph.type": "gatv2" if variant == "gatv2" else "hgt",
         "graph.evidence_mode": "homogeneous" if variant == "homogeneous_evidence" else "heterogeneous",
         "graph.reasoning.cycles": 2,
@@ -145,10 +141,10 @@ def validate_hera_checkpoint_variant(
         raise ValueError(f"{context} checkpoint is not a HERA checkpoint")
     current_architecture = _get(current_config, "project.architecture_version")
     checkpoint_architecture = _get(checkpoint_config, "project.architecture_version")
-    if checkpoint_architecture != current_architecture or current_architecture != "hera_final_v1":
+    if checkpoint_architecture != current_architecture or current_architecture != "hera_final_v2":
         raise ValueError(
             f"{context} checkpoint architecture mismatch: current={current_architecture!r}, "
-            f"checkpoint={checkpoint_architecture!r}; final HERA requires 'hera_final_v1'"
+            f"checkpoint={checkpoint_architecture!r}; final HERA requires 'hera_final_v2'"
         )
     if checkpoint_variant != current_variant:
         raise ValueError(

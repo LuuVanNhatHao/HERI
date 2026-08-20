@@ -320,6 +320,8 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
 def validate_evidence_config(config: Mapping[str, Any], *, mode: str) -> None:
     """Validate mandatory Phase-3 evidence smoke/inspection configuration."""
 
+    if "face" in config.get("evidence", {}):
+        raise ConfigError("evidence.face was removed from the final four-family evidence schema")
     mandatory = [
         "project.name",
         "project.seed",
@@ -351,8 +353,6 @@ def validate_evidence_config(config: Mapping[str, Any], *, mode: str) -> None:
         "evidence.visual_forensic.enabled",
         "evidence.visual_forensic.max_nodes",
         "evidence.visual_forensic.budgeting",
-        "evidence.face.enabled",
-        "evidence.face.truncate",
         "evidence.text_alignment.enabled",
         "evidence.text_alignment.max_nodes",
         "evidence.text_context.enabled",
@@ -406,10 +406,6 @@ def validate_evidence_config(config: Mapping[str, Any], *, mode: str) -> None:
     for family in ("visual_semantic", "visual_forensic", "text_alignment", "text_context"):
         if int(require_key(config, f"evidence.{family}.max_nodes")) <= 0:
             raise ConfigError(f"evidence.{family}.max_nodes must be positive")
-    if bool(require_key(config, "evidence.face.truncate")):
-        max_nodes = get_key(config, "evidence.face.max_nodes")
-        if max_nodes is None or int(max_nodes) <= 0:
-            raise ConfigError("evidence.face.max_nodes must be positive when face.truncate is true")
     if str(require_key(config, "evidence.cross_modal.similarity")) != "cosine":
         raise ConfigError("evidence.cross_modal.similarity currently supports only cosine")
     if int(require_key(config, "dataloader.batch_size")) <= 0:
@@ -551,6 +547,8 @@ def validate_routing_config(config: Mapping[str, Any], *, mode: str) -> None:
     """Validate Phase-6 routing smoke/inspection configuration."""
 
     validate_decision_config(config, mode=mode)
+    if "face" in config.get("routing", {}):
+        raise ConfigError("routing.face was removed from the final four-family routing schema")
     mandatory = [
         "routing.enabled",
         "routing.mode",
@@ -561,7 +559,6 @@ def validate_routing_config(config: Mapping[str, Any], *, mode: str) -> None:
         "routing.estimator.output_weight_std",
         "routing.visual_semantic.enabled",
         "routing.visual_forensic.enabled",
-        "routing.face.enabled",
         "routing.text_alignment.enabled",
         "routing.text_context.enabled",
         "routing.hard_eval.enabled",
@@ -620,6 +617,8 @@ def validate_routing_config(config: Mapping[str, Any], *, mode: str) -> None:
 def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
     """Validate canonical HERA or one registered production ablation."""
 
+    if "face" in config.get("evidence", {}) or "face" in config.get("routing", {}):
+        raise ConfigError("Final HERA forbids the removed face evidence/router family")
     mandatory = [
         "project.name",
         "project.seed",
@@ -651,7 +650,6 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "evidence.visual_semantic.max_nodes",
         "evidence.visual_forensic.enabled",
         "evidence.visual_forensic.max_nodes",
-        "evidence.face.enabled",
         "evidence.text_alignment.enabled",
         "evidence.text_alignment.max_nodes",
         "evidence.text_context.enabled",
@@ -667,7 +665,6 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "routing.estimator.output_weight_std",
         "routing.visual_semantic.enabled",
         "routing.visual_forensic.enabled",
-        "routing.face.enabled",
         "routing.text_alignment.enabled",
         "routing.text_context.enabled",
         "routing.hard_eval.enabled",
@@ -791,8 +788,8 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         require_key(config, key)
     if bool(require_key(config, "dataset.use_mtcnn_boxes")):
         raise ConfigError("Canonical HERA forbids annotation-derived dataset.mtcnn_boxes")
-    if str(require_key(config, "project.architecture_version")) != "hera_final_v1":
-        raise ConfigError("project.architecture_version must be hera_final_v1")
+    if str(require_key(config, "project.architecture_version")) != "hera_final_v2":
+        raise ConfigError("project.architecture_version must be hera_final_v2")
     _validate_common_canonical_data_and_backbones(config, phase_name="Phase-7")
     if str(require_key(config, "model.model_type")) != "hera":
         raise ConfigError("model.model_type must be hera for canonical Phase-7 HERA")
@@ -824,10 +821,6 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
             raise ConfigError("model.grounding.mode must be hypothesis_conditioned for canonical HERA")
         if binary_aggregation != "noisy_or":
             raise ConfigError("model.binary.aggregation must be noisy_or")
-    if bool(require_key(config, "evidence.face.enabled")):
-        raise ConfigError("Final HERA requires evidence.face.enabled=false under dense bbox grounding")
-    if bool(require_key(config, "routing.face.enabled")):
-        raise ConfigError("Final HERA requires routing.face.enabled=false under dense bbox grounding")
     if int(require_key(config, "graph.reasoning.cycles")) != 2:
         raise ConfigError("Final HERA requires exactly two iterative reasoning cycles")
     if not bool(require_key(config, "graph.reasoning.dynamic_rebuild")):

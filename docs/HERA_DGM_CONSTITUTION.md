@@ -1,6 +1,6 @@
 # HERA-DGM — PHASE 0 FINAL
 
-> **Final implementation amendment (`hera_final_v1`).** This amendment
+> **Final implementation amendment (`hera_final_v2`).** This amendment
 > supersedes every legacy MTCNN-candidate, one-cycle, frozen-edge, and
 > target-selected grounding statement below. The model never consumes
 > `mtcnn_boxes`; image grounding is dense DINOv3 box regression; inference
@@ -172,11 +172,11 @@ Each manipulation prediction must be associated with localized supporting eviden
 Examples:
 
 \[
-E^{face}\rightarrow FS
+E^{visual\_forensic}\rightarrow FS
 \]
 
 \[
-E^{face}\rightarrow FA
+E^{visual\_forensic}\rightarrow FA
 \]
 
 \[
@@ -621,8 +621,8 @@ The complete target-independent DINOv3 patch grid is the image-localization
 source. A graph-budgeted subset supports reasoning, while the unbudgeted patch
 store remains available to the grounding head. FS/FA-conditioned dense
 heatmaps and continuous normalized boxes are predicted directly. The legacy
-`face` graph type is retained only as an empty schema slot so no MTCNN-derived
-parameter, node, or proposal can enter training or inference.
+`face` graph type and all of its relations are absent from the final schema, so
+no MTCNN-derived parameter, node, or proposal can enter training or inference.
 
 ---
 
@@ -712,7 +712,7 @@ Responsibilities:
 
 - dense visual features;
 - local visual evidence;
-- face-region representations;
+- local FS/FA manipulation representations;
 - patch-context representations;
 - modality-native visual forensic clues.
 
@@ -792,11 +792,6 @@ From SigLIP2 image features.
 ### Visual forensic evidence
 
 From DINOv3 dense features.
-
-### Face evidence
-
-The legacy graph schema slot is empty. Face manipulations are represented by
-dense visual-forensic DINOv3 patches without annotation-derived proposals.
 
 ### Text alignment evidence
 
@@ -897,7 +892,7 @@ Depth beyond three requires empirical justification.
 
 HGT is an implementation mechanism, not the novelty itself.
 
-Every edge stores `[relation_strength, confidence]`. In `hera_final_v1`,
+Every edge stores `[relation_strength, confidence]`. In `hera_final_v2`,
 confidence contributes an additive log gate to the per-destination attention
 logit and directly multiplies the transmitted value message. Adding edge
 attributes only as a post-HGT residual is forbidden.
@@ -1178,7 +1173,7 @@ Its purpose is to discourage predictions such as:
 ```text
 FA probability = 0.98
 but
-no meaningful face evidence selected
+no meaningful local image evidence selected
 ```
 
 The loss must remain interpretable and simple.

@@ -15,7 +15,7 @@ from .outputs import RoutedEvidenceBatch, RoutedEvidenceSet
 from .reliability import EvidenceReliabilityEstimator
 
 
-ROUTED_FAMILIES = ("visual_semantic", "visual_forensic", "face", "text_alignment", "text_context")
+ROUTED_FAMILIES = ("visual_semantic", "visual_forensic", "text_alignment", "text_context")
 
 
 class EvidenceReliabilityRouter(nn.Module):
@@ -91,7 +91,6 @@ class EvidenceReliabilityRouter(nn.Module):
         output = RoutedEvidenceBatch(
             visual_semantic=routed_sets["visual_semantic"],
             visual_forensic=routed_sets["visual_forensic"],
-            face=routed_sets["face"],
             text_alignment=routed_sets["text_alignment"],
             text_context=routed_sets["text_context"],
             cross_modal_metadata=cross_modal,
