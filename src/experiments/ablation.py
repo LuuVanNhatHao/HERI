@@ -50,13 +50,23 @@ def apply_hera_ablation_variant(config: Mapping[str, Any], variant: str) -> dict
     _set(result, "ablation.variant", variant)
 
     # Explicit canonical defaults make generated effective configs self-contained.
+    _set(result, "project.architecture_version", "hera_final_v1")
+    _set(result, "dataset.use_mtcnn_boxes", False)
+    _set(result, "evidence.face.enabled", False)
+    _set(result, "routing.face.enabled", False)
     _set(result, "graph.type", "hgt")
     _set(result, "graph.evidence_mode", "heterogeneous")
     _set(result, "graph.reasoning.hypothesis_feedback", True)
+    _set(result, "graph.reasoning.cycles", 2)
+    _set(result, "graph.reasoning.dynamic_rebuild", True)
+    _set(result, "graph.reasoning.hypothesis_edge_reweighting", "cosine")
+    _set(result, "graph.edge_attention.enabled", True)
+    _set(result, "graph.edge_attention.confidence_gate", "direct")
     _set(result, "graph.edges.feedback.enabled", True)
     _set(result, "routing.enabled", True)
     _set(result, "routing.regularization.enabled", True)
     _set(result, "model.grounding.mode", "hypothesis_conditioned")
+    _set(result, "model.grounding.image.protocol", "dense_bbox")
     _set(result, "model.binary.aggregation", "noisy_or")
 
     if variant == "no_router":
@@ -92,13 +102,23 @@ def validate_hera_ablation_contract(config: Mapping[str, Any]) -> None:
         )
 
     expected = {
+        "project.architecture_version": "hera_final_v1",
+        "dataset.use_mtcnn_boxes": False,
+        "evidence.face.enabled": False,
+        "routing.face.enabled": False,
         "graph.type": "gatv2" if variant == "gatv2" else "hgt",
         "graph.evidence_mode": "homogeneous" if variant == "homogeneous_evidence" else "heterogeneous",
+        "graph.reasoning.cycles": 2,
+        "graph.reasoning.dynamic_rebuild": True,
+        "graph.reasoning.hypothesis_edge_reweighting": "cosine",
+        "graph.edge_attention.enabled": True,
+        "graph.edge_attention.confidence_gate": "direct",
         "graph.reasoning.hypothesis_feedback": variant != "no_hypothesis_feedback",
         "graph.edges.feedback.enabled": variant != "no_hypothesis_feedback",
         "routing.enabled": variant != "no_router",
         "routing.regularization.enabled": variant != "no_router",
         "model.grounding.mode": "generic" if variant == "generic_grounding" else "hypothesis_conditioned",
+        "model.grounding.image.protocol": "dense_bbox",
         "model.binary.aggregation": "independent_head" if variant == "independent_binary" else "noisy_or",
     }
     for dotted_key, expected_value in expected.items():
@@ -123,6 +143,13 @@ def validate_hera_checkpoint_variant(
     checkpoint_variant = get_hera_ablation_variant(checkpoint_config)
     if checkpoint_config.get("model", {}).get("model_type") != "hera":
         raise ValueError(f"{context} checkpoint is not a HERA checkpoint")
+    current_architecture = _get(current_config, "project.architecture_version")
+    checkpoint_architecture = _get(checkpoint_config, "project.architecture_version")
+    if checkpoint_architecture != current_architecture or current_architecture != "hera_final_v1":
+        raise ValueError(
+            f"{context} checkpoint architecture mismatch: current={current_architecture!r}, "
+            f"checkpoint={checkpoint_architecture!r}; final HERA requires 'hera_final_v1'"
+        )
     if checkpoint_variant != current_variant:
         raise ValueError(
             f"{context} checkpoint variant mismatch: current={current_variant!r}, "

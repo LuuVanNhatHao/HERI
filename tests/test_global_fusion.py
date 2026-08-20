@@ -14,6 +14,8 @@ def test_b0_output_shapes_and_masks() -> None:
     output = model(batch, features=synthetic_features())
     assert output.binary_logit.shape == (3,)
     assert output.atomic_logits.shape == (3, 4)
-    assert output.image_grounding_logits.shape == batch["candidate_face_mask"].shape
+    assert output.image_grounding_logits.shape == (3, 4)
+    assert output.image_grounding_boxes.shape == (3, 4)
+    assert output.image_grounding_patch_boxes.shape == (3, 4, 4)
     assert output.text_grounding_logits.shape == batch["text_grounding_mask"].shape
     assert output.metadata["baseline_type"] == "b0_global"

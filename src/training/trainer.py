@@ -22,7 +22,11 @@ from src.evaluation.evaluator import (
 from src.losses.baseline_losses import BaselineMultitaskLoss
 from src.models.baselines import build_baseline_model
 from src.thresholding.tuner import DEFAULT_THRESHOLDS, tune_thresholds
-from src.training.checkpoint import restore_checkpoint, save_checkpoint
+from src.training.checkpoint import (
+    restore_checkpoint,
+    save_checkpoint,
+    validate_baseline_checkpoint_config,
+)
 from src.training.hera_trainer import (
     _assert_stage_a_backbones_frozen,
     _assert_stage_b_backbones_fully_trainable,
@@ -192,6 +196,14 @@ class BaselineTrainer:
         resume_checkpoint_epoch: int | None = None
         if resume_path is not None:
             resume_payload = torch.load(resume_path, map_location="cpu", weights_only=False)
+            checkpoint_config = resume_payload.get("config")
+            if not isinstance(checkpoint_config, Mapping):
+                raise RuntimeError("Resume checkpoint does not contain its effective baseline config")
+            validate_baseline_checkpoint_config(
+                self.config,
+                checkpoint_config,
+                context="Resume",
+            )
             resume_checkpoint_epoch = int(resume_payload["epoch"])
             start_epoch = resume_checkpoint_epoch + 1
             if start_epoch > total_epochs:

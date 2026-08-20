@@ -1,4 +1,12 @@
 # HERA-DGM — PHASE 0 FINAL
+
+> **Final implementation amendment (`hera_final_v1`).** This amendment
+> supersedes every legacy MTCNN-candidate, one-cycle, frozen-edge, and
+> target-selected grounding statement below. The model never consumes
+> `mtcnn_boxes`; image grounding is dense DINOv3 box regression; inference
+> grounding is routed only by predicted atomic probabilities; edge confidence
+> is part of HGT attention/messages; and canonical reasoning uses exactly two
+> cycles with a target-independent graph rebuild.
 ## Scientific & Engineering Constitution
 
 **Project:** HERA-DGM  
@@ -580,7 +588,8 @@ For all 123,133 manipulated-image rows:
 \max IoU(fake\_image\_box,mtcnn\_boxes)=1.0.
 \]
 
-Therefore every manipulated face corresponds exactly to one provided MTCNN candidate.
+This correspondence is a descriptive release audit only and grants no
+permission to expose MTCNN candidates to a model.
 
 ---
 
@@ -600,39 +609,20 @@ Therefore every manipulated face corresponds exactly to one provided MTCNN candi
 
 It must not be used to reveal which MTCNN face candidate is manipulated at inference time.
 
-`mtcnn_boxes` may be used as model input candidate face regions.
+`mtcnn_boxes` MUST NOT be used as model input, candidate generation, routing,
+grounding selection, or evaluation-time side information. It is unused release
+metadata that may only be inspected during a data audit.
 
 ---
 
-# 19. Face Evidence Nodes
+# 19. Dense Image Evidence
 
-MTCNN boxes are first-class candidate evidence nodes.
-
-Conceptual flow:
-
-```text
-MTCNN face candidates
-        ↓
-ROI / box-aware feature pooling
-        ↓
-face evidence nodes
-        ↓
-FS / FA hypotheses
-```
-
-Patch-level visual evidence must remain available as context/fallback.
-
-The model should not depend exclusively on MTCNN candidate nodes.
-
-Required future ablations:
-
-```text
-patch only
-
-face nodes only
-
-face nodes + patch context
-```
+The complete target-independent DINOv3 patch grid is the image-localization
+source. A graph-budgeted subset supports reasoning, while the unbudgeted patch
+store remains available to the grounding head. FS/FA-conditioned dense
+heatmaps and continuous normalized boxes are predicted directly. The legacy
+`face` graph type is retained only as an empty schema slot so no MTCNN-derived
+parameter, node, or proposal can enter training or inference.
 
 ---
 
@@ -682,7 +672,6 @@ padding
 
 The same deterministic geometric transformation must be applied to:
 
-- `mtcnn_boxes`;
 - `fake_image_box` when used as supervision.
 
 Naive geometric stretching to 384×384 is forbidden.
@@ -806,7 +795,8 @@ From DINOv3 dense features.
 
 ### Face evidence
 
-From MTCNN regions pooled from visual representations.
+The legacy graph schema slot is empty. Face manipulations are represented by
+dense visual-forensic DINOv3 patches without annotation-derived proposals.
 
 ### Text alignment evidence
 
@@ -907,6 +897,11 @@ Depth beyond three requires empirical justification.
 
 HGT is an implementation mechanism, not the novelty itself.
 
+Every edge stores `[relation_strength, confidence]`. In `hera_final_v1`,
+confidence contributes an additive log gate to the per-destination attention
+logit and directly multiplies the transmitted value message. Adding edge
+attributes only as a post-HGT residual is forbidden.
+
 ---
 
 # 30. Required Graph Baseline
@@ -935,10 +930,6 @@ visual_semantic ↔ visual_forensic
 visual_semantic ↔ text_alignment
 
 text_alignment ↔ text_context
-
-face_evidence → FS
-
-face_evidence → FA
 
 visual_forensic → FS
 
@@ -969,7 +960,6 @@ New relation types must have explicit scientific justification.
 
 Primary signals:
 
-- candidate face evidence;
 - local visual forensic evidence;
 - visual context;
 - optional semantic evidence.
@@ -978,7 +968,6 @@ Primary signals:
 
 Primary signals:
 
-- face evidence;
 - fine-grained local visual evidence;
 - facial-context anomaly.
 
@@ -1025,7 +1014,7 @@ The second asks:
 Canonical refinement depth:
 
 ```text
-1–2 cycles
+exactly 2 cycles with graph rebuild between cycles
 ```
 
 Deep iterative reasoning should not be introduced without evidence that it improves the scientific objective.
@@ -1037,11 +1026,11 @@ Deep iterative reasoning should not be introduced without evidence that it impro
 Preferred predictions:
 
 \[
-P(face_i|FS)
+P(patch_i, box|FS)
 \]
 
 \[
-P(face_i|FA)
+P(patch_i, box|FA)
 \]
 
 \[
@@ -1149,14 +1138,12 @@ The binary label therefore reinforces consistency without introducing a direct b
 
 # 39. Image Grounding Loss
 
-Initial implementation SHOULD exploit exact MTCNN correspondence.
+Canonical implementation MUST ignore MTCNN correspondence.
 
-A suitable first version is candidate-face classification/selection.
+A dense patch heatmap plus continuous normalized box regression is required.
 
-Possible future extension:
-
-- continuous box refinement;
-- patch masks.
+The image loss combines Smooth-L1, generalized IoU, and dense patch overlap
+supervision from `fake_image_box`.
 
 The simplest scientifically valid implementation should be tested first.
 
@@ -2017,14 +2004,6 @@ w/o DINOv3 dense/forensic evidence
 
 w/o DeBERTa contextual evidence
 
-w/o MTCNN face nodes
-
-face nodes only
-
-patch nodes only
-
-face nodes + patch context
-
 w/o evidence reliability routing
 
 GATv2 instead of HGT
@@ -2541,9 +2520,9 @@ All conditions are satisfied:
 
 ✓ fake_image_box coordinates verified
 
-✓ MTCNN boxes verified
+✓ MTCNN boxes audited as unused metadata
 
-✓ fake bbox ↔ MTCNN exact correspondence verified
+✓ fake bbox supervision verified independently of model proposals
 
 ✓ generator-class mapping verified
 

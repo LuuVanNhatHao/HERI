@@ -42,6 +42,14 @@ class HERADecisionModule(nn.Module):
         text_config = model_config["grounding"]["text"]
         binary_config = model_config["binary"]
         self.grounding_mode = str(model_config["grounding"].get("mode", "hypothesis_conditioned"))
+        self.grounding_routing = str(model_config["grounding"].get("routing", "soft"))
+        self.grounding_routing_temperature = float(
+            model_config["grounding"].get("routing_temperature", 1.0)
+        )
+        if self.grounding_routing not in {"soft", "hard"}:
+            raise ValueError("model.grounding.routing must be soft or hard")
+        if self.grounding_routing_temperature <= 0:
+            raise ValueError("model.grounding.routing_temperature must be positive")
         if self.grounding_mode not in {"hypothesis_conditioned", "generic"}:
             raise ValueError("model.grounding.mode must be hypothesis_conditioned or generic")
         self.binary_aggregation = str(binary_config["aggregation"])
@@ -94,8 +102,8 @@ class HERADecisionModule(nn.Module):
         """Forward pass using graph/evidence only; no targets are accepted."""
 
         graph_output.validate()
-        if graph_output.refined_face is None:
-            raise ValueError("HypothesisGraphOutput.refined_face is required for Phase-5 image grounding")
+        if graph_output.refined_visual_forensic is None:
+            raise ValueError("refined_visual_forensic is required for dense image grounding")
         if graph_output.refined_text_context is None:
             raise ValueError("HypothesisGraphOutput.refined_text_context is required for Phase-5 full-text grounding")
         atomic_logits = self.attribution_head(
@@ -109,9 +117,9 @@ class HERADecisionModule(nn.Module):
         else:
             binary_logit = noisy_or_output.binary_logit
             binary_probability = noisy_or_output.binary_probability
-        image_logits, image_probabilities, image_mask = self.image_grounding_head(
+        image_logits, image_probabilities, image_mask, image_boxes = self.image_grounding_head(
             hypothesis_features=graph_output.hypothesis_features,
-            face_evidence=graph_output.refined_face,
+            image_evidence=graph_output.refined_visual_forensic,
         )
         text_logits, text_probabilities, text_mask = self.text_grounding_head(
             hypothesis_features=graph_output.hypothesis_features,
@@ -132,11 +140,13 @@ class HERADecisionModule(nn.Module):
             image_grounding_logits=image_logits,
             image_grounding_probabilities=image_probabilities,
             image_grounding_mask=image_mask,
+            image_grounding_boxes=image_boxes,
+            image_grounding_patch_boxes=graph_output.refined_visual_forensic.full_normalized_boxes,
             text_grounding_logits=text_logits,
             text_grounding_probabilities=text_probabilities,
             text_grounding_mask=text_mask,
             hypothesis_features=graph_output.hypothesis_features,
-            face_source_indices=graph_output.refined_face.source_indices,
+            image_source_indices=graph_output.refined_visual_forensic.full_source_indices,
             text_word_ids=graph_output.refined_text_context.full_word_ids,
             metadata={
                 "hypothesis_order": list(HYPOTHESIS_ORDER),
@@ -145,6 +155,10 @@ class HERADecisionModule(nn.Module):
                 "binary_aggregation": self.binary_aggregation,
                 "binary_shortcut": self.binary_aggregation == "independent_head",
                 "grounding_mode": self.grounding_mode,
+                "grounding_routing": self.grounding_routing,
+                "grounding_routing_temperature": self.grounding_routing_temperature,
+                "image_grounding_protocol": "dense_bbox_from_raw_image",
+                "annotation_mtcnn_boxes_used": False,
             },
             evidence_support=evidence_support,
         )

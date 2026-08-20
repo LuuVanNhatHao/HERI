@@ -72,6 +72,8 @@ class BaselineOutput:
     atomic_probabilities: torch.Tensor
     image_grounding_logits: torch.Tensor
     image_grounding_mask: torch.Tensor
+    image_grounding_boxes: torch.Tensor
+    image_grounding_patch_boxes: torch.Tensor
     text_grounding_logits: torch.Tensor
     text_grounding_mask: torch.Tensor
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -86,5 +88,17 @@ class BaselineOutput:
             raise ValueError(f"atomic_logits must be [B,4], got {tuple(self.atomic_logits.shape)}")
         if self.image_grounding_logits.shape != self.image_grounding_mask.shape:
             raise ValueError("image grounding logits/mask shape mismatch")
+        if self.image_grounding_boxes.shape != (batch, 4):
+            raise ValueError("image_grounding_boxes must be [B,4]")
+        if self.image_grounding_patch_boxes.shape != (batch, self.image_grounding_logits.shape[-1], 4):
+            raise ValueError("image_grounding_patch_boxes must be [B,N_patch,4]")
+        for name in ("image_grounding_boxes", "image_grounding_patch_boxes"):
+            boxes = getattr(self, name)
+            if not torch.isfinite(boxes).all():
+                raise FloatingPointError(f"{name} contains non-finite values")
+            if bool(((boxes < -1e-6) | (boxes > 1.0 + 1e-6)).any()):
+                raise ValueError(f"{name} must be normalized to [0,1]")
+            if bool((boxes[..., 2:] < boxes[..., :2]).any()):
+                raise ValueError(f"{name} must contain ordered xyxy boxes")
         if self.text_grounding_logits.shape != self.text_grounding_mask.shape:
             raise ValueError("text grounding logits/mask shape mismatch")

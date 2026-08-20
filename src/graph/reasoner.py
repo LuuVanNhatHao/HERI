@@ -8,7 +8,7 @@ from typing import Any, Mapping
 import torch
 from torch import nn
 
-from src.evidence.outputs import EvidenceSet, HeterogeneousEvidenceBatch
+from src.evidence.outputs import CrossModalMetadata, EvidenceSet, HeterogeneousEvidenceBatch
 
 from .adapters import TypedEvidenceFeatureAdapters
 from .ablations import GATv2GraphEncoder, HomogeneousEvidenceHGTEncoder
@@ -39,6 +39,9 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         self.cycles = int(config["reasoning"]["cycles"])
         if self.cycles < 1 or self.cycles > 2:
             raise ValueError("Phase-4 reasoning cycles must be 1 or 2")
+        self.dynamic_rebuild = bool(config["reasoning"].get("dynamic_rebuild", False))
+        if self.dynamic_rebuild and self.cycles < 2:
+            raise ValueError("dynamic hypothesis refinement requires graph.reasoning.cycles >= 2")
         self.hypotheses = HypothesisNodeInitializer(config)
         self.builder = HypothesisEvidenceGraphBuilder(config)
         self.evidence_adapters = TypedEvidenceFeatureAdapters(
@@ -73,14 +76,25 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         evidence = self.evidence_adapters(evidence)
         batch_size = evidence.visual_semantic.features.shape[0]
         initial_hypotheses = self.hypotheses(batch_size)
-        graph = self.builder.build(evidence, initial_hypotheses)
-        x_dict = dict(graph.x_dict)
+        current_evidence = evidence
+        current_hypotheses = initial_hypotheses
+        graph = None
+        x_dict: dict[str, torch.Tensor] = {}
         intermediate: list[torch.Tensor] = []
-        for _ in range(self.cycles):
+        cycle_statistics: list[dict[str, Any]] = []
+        for cycle_index in range(self.cycles):
+            if cycle_index > 0 and self.dynamic_rebuild:
+                current_evidence = _refresh_cross_modal_metadata(current_evidence)
+            graph = self.builder.build(current_evidence, current_hypotheses)
             encoder = getattr(self, self._encoder_name)
-            x_dict = encoder(x_dict, graph.edge_index_dict, graph.edge_attr_dict)
-            intermediate.append(_unflatten_hypotheses(x_dict[HYPOTHESIS], batch_size=batch_size))
-        hypothesis_features = intermediate[-1]
+            x_dict = encoder(graph.x_dict, graph.edge_index_dict, graph.edge_attr_dict)
+            current_hypotheses = _unflatten_hypotheses(x_dict[HYPOTHESIS], batch_size=batch_size)
+            intermediate.append(current_hypotheses)
+            current_evidence = _refined_evidence_batch(current_evidence, graph, x_dict)
+            cycle_statistics.append(graph_statistics(graph))
+        if graph is None:
+            raise RuntimeError("Graph reasoning produced no cycles")
+        hypothesis_features = current_hypotheses
         output = HypothesisGraphOutput(
             hypothesis_features=hypothesis_features,
             hypothesis_mask=torch.ones(
@@ -90,39 +104,18 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
                 device=hypothesis_features.device,
             ),
             graph_batch=graph,
-            graph_statistics=graph_statistics(graph),
+            graph_statistics={
+                **graph_statistics(graph),
+                "dynamic_rebuild": self.dynamic_rebuild,
+                "cycle_statistics": cycle_statistics,
+            },
             updated_node_features=x_dict,
             intermediate_hypothesis_features=intermediate,
-            refined_visual_semantic=_refined_evidence_set(
-                evidence.visual_semantic,
-                graph.node_sample_indices[VISUAL_SEMANTIC],
-                graph.node_local_indices[VISUAL_SEMANTIC],
-                x_dict[VISUAL_SEMANTIC],
-            ),
-            refined_visual_forensic=_refined_evidence_set(
-                evidence.visual_forensic,
-                graph.node_sample_indices[VISUAL_FORENSIC],
-                graph.node_local_indices[VISUAL_FORENSIC],
-                x_dict[VISUAL_FORENSIC],
-            ),
-            refined_face=_refined_evidence_set(
-                evidence.face,
-                graph.node_sample_indices[FACE],
-                graph.node_local_indices[FACE],
-                x_dict[FACE],
-            ),
-            refined_text_alignment=_refined_evidence_set(
-                evidence.text_alignment,
-                graph.node_sample_indices[TEXT_ALIGNMENT],
-                graph.node_local_indices[TEXT_ALIGNMENT],
-                x_dict[TEXT_ALIGNMENT],
-            ),
-            refined_text_context=_refined_evidence_set(
-                evidence.text_context,
-                graph.node_sample_indices[TEXT_CONTEXT],
-                graph.node_local_indices[TEXT_CONTEXT],
-                x_dict[TEXT_CONTEXT],
-            ),
+            refined_visual_semantic=current_evidence.visual_semantic,
+            refined_visual_forensic=current_evidence.visual_forensic,
+            refined_face=current_evidence.face,
+            refined_text_alignment=current_evidence.text_alignment,
+            refined_text_context=current_evidence.text_context,
         )
         output.validate()
         return output
@@ -149,3 +142,87 @@ def _refined_evidence_set(
     if refined_features.numel():
         features[sample_indices, local_indices] = refined_features
     return replace(original, features=features)
+
+
+def _refined_evidence_batch(
+    evidence: HeterogeneousEvidenceBatch,
+    graph: Any,
+    x_dict: Mapping[str, torch.Tensor],
+) -> HeterogeneousEvidenceBatch:
+    """Reconstruct the typed evidence state after one hypothesis-feedback cycle."""
+
+    return HeterogeneousEvidenceBatch(
+        visual_semantic=_refined_evidence_set(
+            evidence.visual_semantic,
+            graph.node_sample_indices[VISUAL_SEMANTIC],
+            graph.node_local_indices[VISUAL_SEMANTIC],
+            x_dict[VISUAL_SEMANTIC],
+        ),
+        visual_forensic=_refined_evidence_set(
+            evidence.visual_forensic,
+            graph.node_sample_indices[VISUAL_FORENSIC],
+            graph.node_local_indices[VISUAL_FORENSIC],
+            x_dict[VISUAL_FORENSIC],
+        ),
+        face=_refined_evidence_set(
+            evidence.face,
+            graph.node_sample_indices[FACE],
+            graph.node_local_indices[FACE],
+            x_dict[FACE],
+        ),
+        text_alignment=_refined_evidence_set(
+            evidence.text_alignment,
+            graph.node_sample_indices[TEXT_ALIGNMENT],
+            graph.node_local_indices[TEXT_ALIGNMENT],
+            x_dict[TEXT_ALIGNMENT],
+        ),
+        text_context=_refined_evidence_set(
+            evidence.text_context,
+            graph.node_sample_indices[TEXT_CONTEXT],
+            graph.node_local_indices[TEXT_CONTEXT],
+            x_dict[TEXT_CONTEXT],
+        ),
+        cross_modal_metadata=evidence.cross_modal_metadata,
+    )
+
+
+def _refresh_cross_modal_metadata(evidence: HeterogeneousEvidenceBatch) -> HeterogeneousEvidenceBatch:
+    """Re-query semantic edges from the refined evidence state before the next cycle."""
+
+    visual = evidence.visual_semantic
+    text = evidence.text_alignment
+    visual_features = torch.nn.functional.normalize(visual.features.float(), dim=-1)
+    text_features = torch.nn.functional.normalize(text.features.float(), dim=-1)
+    similarity = torch.bmm(visual_features, text_features.transpose(1, 2)).to(visual.features.dtype)
+    valid = visual.mask.unsqueeze(2) & text.mask.unsqueeze(1)
+    similarity = similarity.masked_fill(~valid, 0.0)
+    visual_reliability = (
+        visual.mask.to(visual.features.dtype)
+        if visual.reliability_scores is None
+        else visual.reliability_scores
+    )
+    text_reliability = (
+        text.mask.to(text.features.dtype)
+        if text.reliability_scores is None
+        else text.reliability_scores
+    )
+    confidence = torch.sqrt(
+        (
+            visual_reliability.float().unsqueeze(2).clamp_min(0.0)
+            * text_reliability.float().unsqueeze(1).clamp_min(0.0)
+        ).clamp_min(1e-12)
+    ).to(similarity.dtype)
+    confidence = confidence.masked_fill(~valid, 0.0)
+    previous = evidence.cross_modal_metadata
+    metadata = CrossModalMetadata(
+        similarity=similarity,
+        visual_mask=visual.mask,
+        text_mask=text.mask,
+        visual_source_indices=visual.source_indices,
+        text_source_indices=text.source_indices,
+        edge_confidence=confidence,
+        alignment_loss=previous.alignment_loss,
+        method="iterative_cosine_requery",
+        feature_space="graph_refined_hidden",
+    )
+    return replace(evidence, cross_modal_metadata=metadata)

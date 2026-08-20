@@ -39,7 +39,8 @@ def test_graph_builder_node_counts_and_core_edges() -> None:
     graph.validate()
     assert graph.x_dict[VISUAL_SEMANTIC].shape == (9, 12)
     assert graph.x_dict[VISUAL_FORENSIC].shape == (9, 12)
-    assert graph.x_dict[FACE].shape == (6, 12)
+    # Final protocol never materializes annotation-derived MTCNN face nodes.
+    assert graph.x_dict[FACE].shape == (0, 12)
     assert graph.x_dict[TEXT_ALIGNMENT].shape == (9, 12)
     assert graph.x_dict[TEXT_CONTEXT].shape == (9, 12)
     assert graph.x_dict[HYPOTHESIS].shape == (12, 12)
@@ -66,15 +67,15 @@ def test_graph_builder_node_counts_and_core_edges() -> None:
 def test_hypothesis_support_and_feedback_relations() -> None:
     graph = build_graph()
 
-    assert graph.edge_index_dict[(FACE, SUPPORTS_FS, HYPOTHESIS)].shape[1] == 6
-    assert graph.edge_index_dict[(FACE, SUPPORTS_FA, HYPOTHESIS)].shape[1] == 6
+    assert graph.edge_index_dict[(FACE, SUPPORTS_FS, HYPOTHESIS)].shape[1] == 0
+    assert graph.edge_index_dict[(FACE, SUPPORTS_FA, HYPOTHESIS)].shape[1] == 0
     assert graph.edge_index_dict[(VISUAL_FORENSIC, SUPPORTS_FS, HYPOTHESIS)].shape[1] == 9
     assert graph.edge_index_dict[(VISUAL_FORENSIC, SUPPORTS_FA, HYPOTHESIS)].shape[1] == 9
     assert graph.edge_index_dict[(TEXT_CONTEXT, SUPPORTS_TS, HYPOTHESIS)].shape[1] == 9
     assert graph.edge_index_dict[(TEXT_CONTEXT, SUPPORTS_TA, HYPOTHESIS)].shape[1] == 9
     assert graph.edge_index_dict[(VISUAL_SEMANTIC, SUPPORTS_FS, HYPOTHESIS)].shape[1] == 9
     assert graph.edge_index_dict[(TEXT_ALIGNMENT, SUPPORTS_TA, HYPOTHESIS)].shape[1] == 9
-    assert graph.edge_index_dict[(HYPOTHESIS, QUERIES_FACE, FACE)].shape[1] == 12
+    assert graph.edge_index_dict[(HYPOTHESIS, QUERIES_FACE, FACE)].shape[1] == 0
     assert graph.edge_index_dict[(HYPOTHESIS, QUERIES_VISUAL_FORENSIC, VISUAL_FORENSIC)].shape[1] == 18
     assert graph.edge_index_dict[(HYPOTHESIS, QUERIES_TEXT_CONTEXT, TEXT_CONTEXT)].shape[1] == 18
 

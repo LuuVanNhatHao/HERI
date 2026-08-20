@@ -106,6 +106,7 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
                 "atomic_logits": output.atomic_logits,
                 "binary_logit": output.binary_logit,
                 "image_grounding_logits": output.image_grounding_logits,
+                "image_grounding_boxes": output.image_grounding_boxes,
                 "text_grounding_logits": output.text_grounding_logits,
             }
         )
@@ -199,6 +200,7 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
         metadata.update(
             {
                 "model_type": "hera_dgm",
+                "architecture_version": self.config["project"]["architecture_version"],
                 "ablation_variant": self.ablation_variant,
                 "pipeline": [
                     "SigLIP2",
@@ -213,6 +215,9 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
                 "router_family_mean_reliability": _router_family_mean_reliability(routed),
                 "router_batch_summary": _router_batch_summary(self.config, routed),
                 "forward_forbidden_target_keys": sorted(FORWARD_FORBIDDEN_TARGET_KEYS),
+                "dynamic_graph_rebuild": bool(
+                    self.config["graph"]["reasoning"].get("dynamic_rebuild", False)
+                ),
             }
         )
         return HERADGMOutput(
@@ -223,11 +228,13 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
             image_grounding_logits=decision_output.image_grounding_logits,
             image_grounding_probabilities=decision_output.image_grounding_probabilities,
             image_grounding_mask=decision_output.image_grounding_mask,
+            image_grounding_boxes=decision_output.image_grounding_boxes,
+            image_grounding_patch_boxes=decision_output.image_grounding_patch_boxes,
             text_grounding_logits=decision_output.text_grounding_logits,
             text_grounding_probabilities=decision_output.text_grounding_probabilities,
             text_grounding_mask=decision_output.text_grounding_mask,
             hypothesis_features=decision_output.hypothesis_features,
-            face_source_indices=decision_output.face_source_indices,
+            image_source_indices=decision_output.image_source_indices,
             text_word_ids=decision_output.text_word_ids,
             evidence_support=decision_output.evidence_support,
             metadata=metadata,

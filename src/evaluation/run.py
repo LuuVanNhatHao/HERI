@@ -16,7 +16,7 @@ from src.evaluation.summary import write_predictions_csv, write_summary_csv
 from src.losses.baseline_losses import BaselineMultitaskLoss
 from src.models.baselines import build_baseline_model
 from src.thresholding.tuner import Thresholds
-from src.training.checkpoint import load_checkpoint
+from src.training.checkpoint import restore_checkpoint, validate_baseline_checkpoint_config
 from src.training.precision import PrecisionManager
 from src.utils.config import dump_yaml
 from src.utils.environment import collect_environment_metadata
@@ -154,7 +154,12 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
     checkpoint_path, thresholds_path = resolve_baseline_evaluation_artifacts(config)
     tqdm.write(f"Resolved evaluation checkpoint: {checkpoint_path}")
     tqdm.write(f"Resolved validation thresholds: {thresholds_path}")
-    load_checkpoint(path=checkpoint_path, model=model, restore_rng=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint_config = checkpoint.get("config")
+    if not isinstance(checkpoint_config, Mapping):
+        raise RuntimeError("Evaluation checkpoint does not contain its effective baseline config")
+    validate_baseline_checkpoint_config(config, checkpoint_config, context="Evaluation")
+    restore_checkpoint(checkpoint=checkpoint, model=model, restore_rng=False)
     thresholds = _load_thresholds(
         thresholds_path,
         checkpoint_path=checkpoint_path,
@@ -182,6 +187,8 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
     run_info = {
         "run_id": run_id,
         "model_name": config["project"]["name"],
+        "architecture_version": config["project"]["architecture_version"],
+        "image_grounding_protocol": "dense_bbox",
         "baseline_type": config["model"]["baseline_type"],
         "seed": config["project"]["seed"],
         "config_name": str(config.get("project", {}).get("config_name", "evaluate_baseline")),

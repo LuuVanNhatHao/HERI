@@ -90,6 +90,40 @@ def test_hera_prediction_export_contains_phase8_9_10_metadata(tmp_path: Path) ->
     assert "real_f1" in summary_df.columns
 
 
+def test_grounding_routing_is_independent_of_atomic_targets() -> None:
+    model = StaticHERAModel()
+    first_batch = synthetic_batch()
+    second_batch = synthetic_batch()
+    second_batch["atomic_target"] = 1.0 - second_batch["atomic_target"]
+    precision = PrecisionManager(precision="fp32", device=torch.device("cpu"))
+
+    first = run_inference(
+        model=model,
+        loader=[first_batch],
+        loss_fn=None,
+        device=torch.device("cpu"),
+        precision=precision,
+        max_batches=None,
+        desc="target-free grounding A",
+        progress=False,
+    )
+    second = run_inference(
+        model=model,
+        loader=[second_batch],
+        loss_fn=None,
+        device=torch.device("cpu"),
+        precision=precision,
+        max_batches=None,
+        desc="target-free grounding B",
+        progress=False,
+    )
+
+    assert first.image_grounding_pred_indices == second.image_grounding_pred_indices
+    assert first.image_grounding_pred_boxes == second.image_grounding_pred_boxes
+    assert first.image_grounding_pred_ious == second.image_grounding_pred_ious
+    assert first.text_pred_word_ids == second.text_pred_word_ids
+
+
 def test_hera_evaluation_artifacts_resolve_latest_complete_run(tmp_path: Path) -> None:
     older_run = tmp_path / "hera_seed42_older"
     newer_run = tmp_path / "hera_seed42_newer"

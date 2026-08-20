@@ -96,6 +96,7 @@ def benchmark_signature(config: Mapping[str, Any]) -> dict[str, Any]:
     manifest = dataset.get("split_manifest", {}).get("path")
     manifest_path = Path(str(manifest)) if manifest not in (None, "") else None
     return {
+        "architecture_version": config["project"]["architecture_version"],
         "task_type": config["task"]["type"],
         "signals": SignalContract.from_config(config).as_dict(),
         "dataset_adapter": dataset["adapter"],

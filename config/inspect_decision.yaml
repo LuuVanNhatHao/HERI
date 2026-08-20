@@ -72,7 +72,7 @@ evidence:
     max_nodes: 64
     budgeting: spatial_balanced
   face:
-    enabled: true
+    enabled: false
     truncate: false
     max_nodes:
     budgeting: ordered

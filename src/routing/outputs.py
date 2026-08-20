@@ -75,6 +75,7 @@ class RoutedEvidenceSet:
             features=self.routed_features,
             mask=graph_mask,
             source_indices=source_indices,
+            reliability_scores=self.reliability_scores.masked_fill(~graph_mask, 0.0),
         )
 
 

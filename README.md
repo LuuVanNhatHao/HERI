@@ -2,6 +2,17 @@
 
 HERA-DGM is governed by the frozen Phase 0 Constitution in `docs/HERA_DGM_CONSTITUTION.md`.
 
+## Final protocol (`hera_final_v1`)
+
+The final implementation intentionally breaks compatibility with earlier
+checkpoints. It never supplies DGM4 `mtcnn_boxes` to a model, predicts image
+boxes directly from the full DINOv3 patch grid, routes FS/FA and TS/TA
+grounding at inference using predicted atomic probabilities only, applies
+edge confidence inside HGT attention/messages, and performs exactly two graph
+reasoning cycles with a target-independent graph rebuild between cycles.
+Legacy checkpoints must not be reused; train/evaluate under the isolated
+`outputs/phase7_final_clean*` roots.
+
 Phase 1 implements only DGM4 dataset infrastructure:
 
 - schema validation;
@@ -65,7 +76,7 @@ Use the reported `best_num_workers` only when it improves end-to-end training
 
 ## Controlled HERA ablations
 
-The production ablation suite reuses the canonical DGM4 split, three-stage
+The production ablation suite reuses the canonical DGM4 split, two-stage
 fine-tuning protocol, optimizer, scheduler, thresholds, and final test
 evaluation. It contains six HERA-only experiments; B0 and B1 are deliberately
 excluded because they are reported as standalone baselines:
@@ -119,6 +130,7 @@ python scripts/run_hera_ablation.py \
 Every variant owns an isolated directory under `outputs/hera_ablation/`.
 Training auto-resume therefore cannot select another variant's checkpoint.
 Evaluation rows are combined into `outputs/hera_ablation/ablation_summary.csv`.
+Each ablation has a 12-epoch maximum with the same early-stopping policy.
 Rerunning the same command resumes an interrupted variant from its latest
 `last.pt`, skips variants with a valid `training_complete.json`, and skips an
 evaluation whose `summary.csv` already exists. Checkpoints are written after

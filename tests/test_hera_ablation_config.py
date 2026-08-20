@@ -66,6 +66,8 @@ def test_suite_materializes_isolated_full_train_and_evaluation_configs(tmp_path:
         validate_hera_config(train_config, mode="train")
         validate_hera_config(evaluate_config, mode="evaluate")
         assert train_config["training"]["auto_resume"]["enabled"] is True
+        assert train_config["training"]["epochs"] == 12
+        assert evaluate_config["training"]["epochs"] == 12
         assert evaluate_config["evaluation"]["checkpoint_resolution"]["output_root"] == train_config["output"]["root"]
         assert evaluate_config["ablation"]["variant"] == job.variant
         assert train_config["ablation"]["variant"] == job.variant
@@ -86,6 +88,11 @@ def test_checkpoint_variant_mismatch_is_rejected() -> None:
     validate_hera_checkpoint_variant(no_router, no_router, context="fixture")
     with pytest.raises(ValueError, match="variant mismatch"):
         validate_hera_checkpoint_variant(no_router, gatv2, context="fixture")
+
+    legacy = copy.deepcopy(no_router)
+    legacy["project"].pop("architecture_version")
+    with pytest.raises(ValueError, match="architecture mismatch"):
+        validate_hera_checkpoint_variant(no_router, legacy, context="fixture")
 
 
 def test_summary_aggregation_preserves_variant_identity(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 project:
   name: HERA-DGM
   seed: 42
+  architecture_version: baseline_dense_bbox_v1
 dataset:
   name: DGM4
   root: data/DGM4
@@ -8,6 +9,7 @@ dataset:
   val_annotations: data/DGM4/val.json
   test_annotations: data/DGM4/test.json
   image_root: data/DGM4/images
+  use_mtcnn_boxes: false
   verify_hashes: true
   verify_image_exists: true
 image:
@@ -106,4 +108,4 @@ progress:
 logging:
   level: INFO
 output:
-  root: outputs/phase2_smoke
+  root: outputs/baselines_final_clean_smoke

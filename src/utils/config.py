@@ -111,11 +111,13 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
     mandatory = [
         "project.name",
         "project.seed",
+        "project.architecture_version",
         "dataset.root",
         "dataset.train_annotations",
         "dataset.val_annotations",
         "dataset.test_annotations",
         "dataset.image_root",
+        "dataset.use_mtcnn_boxes",
         "image.size",
         "image.preserve_aspect_ratio",
         "image.padding",
@@ -215,6 +217,10 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
         )
     for key in mandatory:
         require_key(config, key)
+    if bool(require_key(config, "dataset.use_mtcnn_boxes")):
+        raise ConfigError("Canonical baselines forbid annotation-derived dataset.mtcnn_boxes")
+    if str(require_key(config, "project.architecture_version")) != "baseline_dense_bbox_v1":
+        raise ConfigError("Baseline project.architecture_version must be baseline_dense_bbox_v1")
     if Path(str(require_key(config, "dataset.root"))).as_posix() != "data/DGM4":
         raise ConfigError("dataset.root must be the canonical value: data/DGM4")
     if Path(str(require_key(config, "dataset.image_root"))).as_posix() != "data/DGM4/images":
@@ -617,11 +623,13 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
     mandatory = [
         "project.name",
         "project.seed",
+        "project.architecture_version",
         "dataset.root",
         "dataset.train_annotations",
         "dataset.val_annotations",
         "dataset.test_annotations",
         "dataset.image_root",
+        "dataset.use_mtcnn_boxes",
         "image.size",
         "image.preserve_aspect_ratio",
         "image.padding",
@@ -676,6 +684,10 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "graph.hypothesis_init_std",
         "graph.reasoning.cycles",
         "graph.reasoning.hypothesis_feedback",
+        "graph.reasoning.dynamic_rebuild",
+        "graph.reasoning.hypothesis_edge_reweighting",
+        "graph.edge_attention.enabled",
+        "graph.edge_attention.confidence_gate",
         "graph.edges.visual_semantic_visual_forensic.method",
         "graph.edges.visual_semantic_visual_forensic.k",
         "graph.edges.visual_semantic_visual_forensic.bidirectional",
@@ -694,6 +706,9 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "model.attribution.dropout",
         "model.grounding.image.scoring",
         "model.grounding.image.dropout",
+        "model.grounding.image.protocol",
+        "model.grounding.routing",
+        "model.grounding.routing_temperature",
         "model.grounding.text.scoring",
         "model.grounding.text.dropout",
         "model.grounding.text.full_token_store",
@@ -705,6 +720,9 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "loss.lambda_txt",
         "loss.lambda_ev",
         "loss.lambda_align",
+        "loss.image_grounding.l1_weight",
+        "loss.image_grounding.giou_weight",
+        "loss.image_grounding.heatmap_weight",
         "training.epochs",
         "training.micro_batch_size",
         "training.gradient_accumulation_steps",
@@ -771,6 +789,10 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError(f"Unknown HERA config mode: {mode!r}")
     for key in mandatory:
         require_key(config, key)
+    if bool(require_key(config, "dataset.use_mtcnn_boxes")):
+        raise ConfigError("Canonical HERA forbids annotation-derived dataset.mtcnn_boxes")
+    if str(require_key(config, "project.architecture_version")) != "hera_final_v1":
+        raise ConfigError("project.architecture_version must be hera_final_v1")
     _validate_common_canonical_data_and_backbones(config, phase_name="Phase-7")
     if str(require_key(config, "model.model_type")) != "hera":
         raise ConfigError("model.model_type must be hera for canonical Phase-7 HERA")
@@ -802,12 +824,32 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
             raise ConfigError("model.grounding.mode must be hypothesis_conditioned for canonical HERA")
         if binary_aggregation != "noisy_or":
             raise ConfigError("model.binary.aggregation must be noisy_or")
+    if bool(require_key(config, "evidence.face.enabled")):
+        raise ConfigError("Final HERA requires evidence.face.enabled=false under dense bbox grounding")
+    if bool(require_key(config, "routing.face.enabled")):
+        raise ConfigError("Final HERA requires routing.face.enabled=false under dense bbox grounding")
+    if int(require_key(config, "graph.reasoning.cycles")) != 2:
+        raise ConfigError("Final HERA requires exactly two iterative reasoning cycles")
+    if not bool(require_key(config, "graph.reasoning.dynamic_rebuild")):
+        raise ConfigError("Final HERA requires dynamic graph rebuild between reasoning cycles")
+    if str(require_key(config, "graph.reasoning.hypothesis_edge_reweighting")) != "cosine":
+        raise ConfigError("graph.reasoning.hypothesis_edge_reweighting must be cosine")
+    if not bool(require_key(config, "graph.edge_attention.enabled")):
+        raise ConfigError("Final HERA requires reliability-aware edge attention")
+    if str(require_key(config, "graph.edge_attention.confidence_gate")) != "direct":
+        raise ConfigError("graph.edge_attention.confidence_gate must be direct")
+    if str(require_key(config, "model.grounding.image.protocol")) != "dense_bbox":
+        raise ConfigError("Final HERA image grounding protocol must be dense_bbox")
     if graph_type not in {"hgt", "gatv2"}:
         raise ConfigError("graph.type must be hgt or gatv2")
     if evidence_mode not in {"heterogeneous", "homogeneous"}:
         raise ConfigError("graph.evidence_mode must be heterogeneous or homogeneous")
     if grounding_mode not in {"hypothesis_conditioned", "generic"}:
         raise ConfigError("model.grounding.mode must be hypothesis_conditioned or generic")
+    if str(require_key(config, "model.grounding.routing")) not in {"soft", "hard"}:
+        raise ConfigError("model.grounding.routing must be soft or hard")
+    if float(require_key(config, "model.grounding.routing_temperature")) <= 0:
+        raise ConfigError("model.grounding.routing_temperature must be positive")
     if binary_aggregation not in {"noisy_or", "independent_head"}:
         raise ConfigError("model.binary.aggregation must be noisy_or or independent_head")
     if not bool(require_key(config, "model.grounding.text.full_token_store")):
@@ -848,6 +890,9 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "loss.lambda_txt",
         "loss.lambda_ev",
         "loss.lambda_align",
+        "loss.image_grounding.l1_weight",
+        "loss.image_grounding.giou_weight",
+        "loss.image_grounding.heatmap_weight",
         "model.attribution.dropout",
         "model.grounding.image.dropout",
         "model.grounding.text.dropout",

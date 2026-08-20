@@ -41,7 +41,9 @@ class EvidenceProjection(nn.Module):
 class EvidenceProjectionBank(nn.Module):
     """Separate projectors for canonical Phase-3 evidence families."""
 
-    families = ("visual_semantic", "visual_forensic", "face", "text_alignment", "text_context")
+    # ``face`` was annotation-derived from DGM4 MTCNN boxes and is deliberately
+    # absent from the final production module graph.
+    families = ("visual_semantic", "visual_forensic", "text_alignment", "text_context")
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__()

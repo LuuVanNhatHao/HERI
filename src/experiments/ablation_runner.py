@@ -101,6 +101,7 @@ def materialize_ablation_jobs(
             variant=variant,
             train_root=_portable_path(train_root, root),
             evaluate_root=_portable_path(evaluate_root, root),
+            training_epochs=int(suite.get("training_epochs", train_config["training"]["epochs"])),
         )
         validate_hera_config(train_config, mode="train")
         validate_hera_config(evaluate_config, mode="evaluate")
@@ -287,18 +288,23 @@ def _bind_variant_protocol(
     variant: str,
     train_root: str,
     evaluate_root: str,
+    training_epochs: int,
 ) -> None:
+    if int(training_epochs) <= 0:
+        raise ConfigError("suite.training_epochs must be positive")
     train_config["project"]["name"] = f"HERA-DGM4-ablation-{variant}"
     train_config["project"]["config_name"] = f"ablation/{variant}/train"
     train_config["project"].pop("run_id", None)
     train_config["output"]["root"] = train_root
     train_config["training"]["auto_resume"]["run_dir"] = None
     train_config["training"]["resume_from"] = None
+    train_config["training"]["epochs"] = int(training_epochs)
 
     evaluate_config["project"]["name"] = f"HERA-DGM4-ablation-{variant}"
     evaluate_config["project"]["config_name"] = f"ablation/{variant}/evaluate"
     evaluate_config["project"]["run_id"] = f"hera_{variant}_test"
     evaluate_config["output"]["root"] = evaluate_root
+    evaluate_config["training"]["epochs"] = int(training_epochs)
     evaluate_config["evaluation"]["checkpoint_path"] = None
     evaluate_config["evaluation"]["thresholds_path"] = None
     resolution = evaluate_config["evaluation"]["checkpoint_resolution"]

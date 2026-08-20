@@ -72,6 +72,11 @@ class VisualForensicEvidenceExtractor(nn.Module):
             device=dinov3.patch_tokens.device,
             dtype=dinov3.patch_tokens.dtype,
         )
+        batch_size = dinov3.patch_tokens.shape[0]
+        full_centers = centers.unsqueeze(0).expand(batch_size, -1, -1)
+        full_boxes = boxes.unsqueeze(0).expand(batch_size, -1, -1)
+        full_norm_centers = norm_centers.unsqueeze(0).expand(batch_size, -1, -1)
+        full_norm_boxes = norm_boxes.unsqueeze(0).expand(batch_size, -1, -1)
         return EvidenceSet(
             family="visual_forensic",
             features=projected,
@@ -89,6 +94,10 @@ class VisualForensicEvidenceExtractor(nn.Module):
                 device=dinov3.patch_tokens.device,
                 dtype=torch.long,
             ).unsqueeze(0).expand(dinov3.patch_tokens.shape[0], -1),
+            full_spatial_centers=full_centers,
+            full_spatial_boxes=full_boxes,
+            full_normalized_centers=full_norm_centers,
+            full_normalized_boxes=full_norm_boxes,
             provenance={
                 "source": "dinov3.patch_tokens + rgb_high_frequency_residuals",
                 "geometry_frame": "transformed_384",

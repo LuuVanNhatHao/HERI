@@ -52,6 +52,7 @@ def write_predictions_csv(
                 "face_size_bucket": _value_or_blank(bundle.face_size_bucket, idx),
                 "image_grounding_pred_index": _value_or_blank(bundle.image_grounding_pred_indices, idx),
                 "image_grounding_iou": _value_or_blank(bundle.image_grounding_pred_ious, idx),
+                "image_grounding_pred_box": _value_or_blank(bundle.image_grounding_pred_boxes, idx),
                 "text_grounding_target_word_ids": _value_or_blank(bundle.text_target_word_ids, idx),
                 "text_grounding_pred_word_ids": _value_or_blank(bundle.text_pred_word_ids, idx),
                 "router_diagnostics": _value_or_blank(bundle.router_diagnostics, idx),

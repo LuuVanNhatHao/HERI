@@ -7,16 +7,6 @@ from typing import Any
 import torch
 
 
-def _pad_2d_tensors(tensors: list[torch.Tensor], *, width: int, dtype: torch.dtype) -> torch.Tensor:
-    max_len = max((tensor.shape[0] for tensor in tensors), default=0)
-    padded = torch.zeros((len(tensors), max_len, width), dtype=dtype)
-    for row, tensor in enumerate(tensors):
-        if tensor.numel() == 0:
-            continue
-        padded[row, : tensor.shape[0], :] = tensor.to(dtype)
-    return padded
-
-
 def _pad_1d_tensors(
     tensors: list[torch.Tensor],
     *,
@@ -37,8 +27,6 @@ def dgm4_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
     if not batch:
         raise ValueError("Cannot collate an empty batch")
-    face_boxes = [item["candidate_face_boxes"] for item in batch]
-    face_masks = [item["candidate_face_mask"] for item in batch]
     text_input_ids = [item["text_input_ids"] for item in batch]
     text_attention_masks = [item["text_attention_mask"] for item in batch]
     text_grounding_targets = [item["text_grounding_target"] for item in batch]
@@ -58,23 +46,11 @@ def dgm4_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "words": [item["words"] for item in batch],
         "binary_target": torch.stack([item["binary_target"] for item in batch]),
         "atomic_target": torch.stack([item["atomic_target"] for item in batch]),
-        "candidate_face_boxes": _pad_2d_tensors(face_boxes, width=4, dtype=torch.float32),
-        "candidate_face_mask": _pad_1d_tensors(
-            face_masks,
-            pad_value=False,
-            dtype=torch.bool,
-        ),
         "fake_image_box_target": torch.stack(
             [item["fake_image_box_target"] for item in batch]
         ),
         "has_image_manipulation": torch.stack(
             [item["has_image_manipulation"] for item in batch]
-        ),
-        "manipulated_face_target_index": torch.stack(
-            [item["manipulated_face_target_index"] for item in batch]
-        ),
-        "manipulated_face_target_iou": torch.stack(
-            [item["manipulated_face_target_iou"] for item in batch]
         ),
         "fake_text_pos": _pad_1d_tensors(
             fake_text_positions,

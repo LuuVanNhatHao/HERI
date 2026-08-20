@@ -1,6 +1,7 @@
 project:
   name: HERA-DGM
   seed: 42
+  architecture_version: hera_final_v1
   config_name: evaluate_hera
   run_id: hera_test_evaluation
 
@@ -13,6 +14,7 @@ dataset:
   image_root: data/DGM4/images
   verify_hashes: true
   verify_image_exists: true
+  use_mtcnn_boxes: false
 
 dataset_hashes:
   train: dafd4fe101d3de63b433759fae79b14b465294f7be73f26c9f3bb13b8de87704
@@ -74,7 +76,7 @@ evidence:
     max_nodes: 96
     budgeting: forensic_saliency
   face:
-    enabled: true
+    enabled: false
     truncate: false
     max_nodes:
     budgeting: ordered
@@ -104,7 +106,7 @@ routing:
   visual_forensic:
     enabled: true
   face:
-    enabled: true
+    enabled: false
   text_alignment:
     enabled: true
   text_context:
@@ -136,8 +138,13 @@ graph:
     text_alignment:
     text_context:
   reasoning:
-    cycles: 1
+    cycles: 2
     hypothesis_feedback: true
+    dynamic_rebuild: true
+    hypothesis_edge_reweighting: cosine
+  edge_attention:
+    enabled: true
+    confidence_gate: direct
   edges:
     visual_semantic_visual_forensic:
       method: spatial_knn
@@ -166,7 +173,10 @@ model:
     dropout: 0.1
   grounding:
     mode: hypothesis_conditioned
+    routing: soft
+    routing_temperature: 1.0
     image:
+      protocol: dense_bbox
       scoring: dot_product
       dropout: 0.1
     text:
@@ -184,6 +194,10 @@ loss:
   lambda_txt: 1.0
   lambda_ev: 0.1
   lambda_align: 0.1
+  image_grounding:
+    l1_weight: 1.0
+    giou_weight: 1.0
+    heatmap_weight: 0.25
 
 training:
   epochs: 5
@@ -289,7 +303,7 @@ evaluation:
   checkpoint_resolution:
     enabled: true
     mode: latest
-    output_root: outputs/phase7_v3_full_ft
+    output_root: outputs/phase7_final_clean
     run_dir:
     checkpoint_name: best.pt
     thresholds_name: best_thresholds.json
@@ -301,4 +315,4 @@ logging:
   level: INFO
 
 output:
-  root: outputs/phase7_eval
+  root: outputs/phase7_final_clean_eval

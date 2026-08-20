@@ -3,6 +3,7 @@ suite:
   base_train_config: config/train_hera.yaml
   base_evaluate_config: config/evaluate_hera.yaml
   output_root: outputs/hera_ablation
+  training_epochs: 12
   fail_fast: true
   variants:
     - no_router

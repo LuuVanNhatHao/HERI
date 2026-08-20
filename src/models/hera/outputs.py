@@ -21,11 +21,13 @@ class HERADecisionOutput:
     image_grounding_logits: torch.Tensor
     image_grounding_probabilities: torch.Tensor
     image_grounding_mask: torch.Tensor
+    image_grounding_boxes: torch.Tensor
+    image_grounding_patch_boxes: torch.Tensor
     text_grounding_logits: torch.Tensor
     text_grounding_probabilities: torch.Tensor
     text_grounding_mask: torch.Tensor
     hypothesis_features: torch.Tensor
-    face_source_indices: torch.Tensor | None = None
+    image_source_indices: torch.Tensor | None = None
     text_word_ids: torch.Tensor | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     evidence_support: torch.Tensor | None = None
@@ -47,13 +49,17 @@ class HERADecisionOutput:
         if self.binary_logit.shape != (batch,):
             raise ValueError("binary_logit must be [B]")
         if self.image_grounding_logits.ndim != 3 or self.image_grounding_logits.shape[:2] != (batch, 2):
-            raise ValueError("image_grounding_logits must be [B,2,N_face]")
+            raise ValueError("image_grounding_logits must be [B,2,N_patch]")
         if self.image_grounding_probabilities.shape != self.image_grounding_logits.shape:
             raise ValueError("image_grounding_probabilities shape mismatch")
         if self.image_grounding_mask.shape != (batch, self.image_grounding_logits.shape[-1]):
-            raise ValueError("image_grounding_mask must be [B,N_face]")
+            raise ValueError("image_grounding_mask must be [B,N_patch]")
         if self.image_grounding_mask.dtype != torch.bool:
             raise ValueError("image_grounding_mask must be bool")
+        if self.image_grounding_boxes.shape != (batch, 2, 4):
+            raise ValueError("image_grounding_boxes must be [B,2,4]")
+        if self.image_grounding_patch_boxes.shape != (batch, self.image_grounding_logits.shape[-1], 4):
+            raise ValueError("image_grounding_patch_boxes must be [B,N_patch,4]")
         if self.text_grounding_logits.ndim != 3 or self.text_grounding_logits.shape[:2] != (batch, 2):
             raise ValueError("text_grounding_logits must be [B,2,N_full_text]")
         if self.text_grounding_probabilities.shape != self.text_grounding_logits.shape:
@@ -70,6 +76,8 @@ class HERADecisionOutput:
             "binary_logit",
             "image_grounding_logits",
             "image_grounding_probabilities",
+            "image_grounding_boxes",
+            "image_grounding_patch_boxes",
             "text_grounding_logits",
             "text_grounding_probabilities",
         ):
@@ -80,8 +88,14 @@ class HERADecisionOutput:
             tensor = getattr(self, name)
             if bool(((tensor < -1e-6) | (tensor > 1.0 + 1e-6)).any()):
                 raise ValueError(f"{name} must be probabilities in [0,1]")
-        if self.face_source_indices is not None and self.face_source_indices.shape != self.image_grounding_mask.shape:
-            raise ValueError("face_source_indices must align with image_grounding_mask")
+        for name in ("image_grounding_boxes", "image_grounding_patch_boxes"):
+            tensor = getattr(self, name)
+            if bool(((tensor < -1e-6) | (tensor > 1.0 + 1e-6)).any()):
+                raise ValueError(f"{name} must contain normalized coordinates in [0,1]")
+            if bool((tensor[..., 2:] < tensor[..., :2]).any()):
+                raise ValueError(f"{name} must contain ordered xyxy boxes")
+        if self.image_source_indices is not None and self.image_source_indices.shape != self.image_grounding_mask.shape:
+            raise ValueError("image_source_indices must align with image_grounding_mask")
         if self.text_word_ids is not None and self.text_word_ids.shape != self.text_grounding_mask.shape:
             raise ValueError("text_word_ids must align with text_grounding_mask")
         if self.evidence_support is not None:

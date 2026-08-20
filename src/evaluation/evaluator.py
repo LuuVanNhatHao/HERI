@@ -21,6 +21,10 @@ from src.metrics.reports import (
 )
 from src.thresholding.tuner import Thresholds
 from src.training.precision import PrecisionManager
+from src.evaluation.hypothesis_grounding import (
+    route_image_grounding_boxes,
+    route_text_grounding_probabilities,
+)
 
 
 @dataclass
@@ -41,6 +45,7 @@ class PredictionBundle:
     image_ious: list[float] = field(default_factory=list)
     image_grounding_pred_indices: list[int | None] = field(default_factory=list)
     image_grounding_pred_ious: list[float | None] = field(default_factory=list)
+    image_grounding_pred_boxes: list[str] = field(default_factory=list)
     face_area_fraction: list[float | None] = field(default_factory=list)
     face_size_bucket: list[str | None] = field(default_factory=list)
     text_target_word_ids: list[str] = field(default_factory=list)
@@ -135,26 +140,33 @@ def _accumulate_batch(bundle: PredictionBundle, output: Any, batch: Mapping[str,
 
 
 def _accumulate_image_ious(bundle: PredictionBundle, output: Any, batch: Mapping[str, Any]) -> None:
-    logits = output.image_grounding_logits.detach().cpu()
-    masks = output.image_grounding_mask.detach().cpu().to(torch.bool)
-    boxes = batch["candidate_face_boxes"].detach().cpu()
     targets = batch["fake_image_box_target"].detach().cpu()
     applies = batch["has_image_manipulation"].detach().cpu().to(torch.bool)
-    atomic_targets = batch["atomic_target"].detach().cpu()
-    for idx in range(logits.shape[0]):
-        if not bool(applies[idx]) or not bool(masks[idx].any()):
+    image = batch["image"]
+    height, width = int(image.shape[-2]), int(image.shape[-1])
+    scale = targets.new_tensor([width, height, width, height])
+    normalized_targets = (targets / scale).clamp(0.0, 1.0)
+    if hasattr(output, "image_grounding_boxes"):
+        if output.image_grounding_boxes.ndim == 3:
+            predicted_boxes, route_weights = route_image_grounding_boxes(output)
+        else:
+            predicted_boxes = output.image_grounding_boxes
+            route_weights = output.atomic_probabilities[:, :2]
+    else:
+        raise ValueError("Protocol-clean evaluation requires direct image_grounding_boxes")
+    predicted_boxes = predicted_boxes.detach().cpu()
+    route_weights = route_weights.detach().cpu()
+    for idx in range(predicted_boxes.shape[0]):
+        if not bool(applies[idx]):
             bundle.image_grounding_pred_indices.append(None)
             bundle.image_grounding_pred_ious.append(None)
+            bundle.image_grounding_pred_boxes.append("")
             continue
-        sample_logits = _select_image_grounding_logits(logits, atomic_targets, idx)
-        if sample_logits is None:
-            bundle.image_grounding_pred_indices.append(None)
-            bundle.image_grounding_pred_ious.append(None)
-            continue
-        pred_idx = int(torch.argmax(sample_logits.masked_fill(~masks[idx], -1e4)).item())
-        pred_iou = iou(boxes[idx, pred_idx].tolist(), targets[idx].tolist())
+        route_index = int(route_weights[idx].argmax().item())
+        bundle.image_grounding_pred_indices.append(route_index)
+        bundle.image_grounding_pred_boxes.append(json.dumps(predicted_boxes[idx].tolist()))
+        pred_iou = iou(predicted_boxes[idx].tolist(), normalized_targets[idx].tolist())
         bundle.image_ious.append(pred_iou)
-        bundle.image_grounding_pred_indices.append(pred_idx)
         bundle.image_grounding_pred_ious.append(pred_iou)
 
 
@@ -169,22 +181,17 @@ def _accumulate_text_counts(bundle: PredictionBundle, output: Any, batch: Mappin
         else batch["text_word_ids"].detach().cpu()
     )
     applies = batch["has_text_manipulation"].detach().cpu().to(torch.bool)
-    atomic_targets = batch["atomic_target"].detach().cpu()
-    probs = (
-        output.text_grounding_probabilities.detach().cpu()
-        if hasattr(output, "text_grounding_probabilities")
-        else torch.sigmoid(logits)
-    )
+    if hasattr(output, "text_grounding_probabilities"):
+        probs, _ = route_text_grounding_probabilities(output)
+        probs = probs.detach().cpu()
+    else:
+        probs = torch.sigmoid(logits)
     for sample_idx in range(logits.shape[0]):
         if not bool(applies[sample_idx]):
             bundle.text_target_word_ids.append("")
             bundle.text_pred_word_ids.append("")
             continue
-        sample_logits, sample_probs = _select_text_grounding_scores(logits, probs, atomic_targets, sample_idx)
-        if sample_logits is None or sample_probs is None:
-            bundle.text_target_word_ids.append("")
-            bundle.text_pred_word_ids.append("")
-            continue
+        sample_probs = probs[sample_idx]
         valid = masks[sample_idx] & (targets[sample_idx] >= 0)
         if not bool(valid.any()):
             bundle.text_target_word_ids.append("")
@@ -210,39 +217,6 @@ def _accumulate_text_counts(bundle: PredictionBundle, output: Any, batch: Mappin
             bundle.text_fn += int(y_true == 1 and y_pred == 0)
         bundle.text_target_word_ids.append(json.dumps(target_words))
         bundle.text_pred_word_ids.append(json.dumps(pred_words))
-
-
-def _select_image_grounding_logits(
-    logits: torch.Tensor,
-    atomic_targets: torch.Tensor,
-    sample_idx: int,
-) -> torch.Tensor | None:
-    if logits.ndim == 2:
-        return logits[sample_idx]
-    if logits.ndim != 3 or logits.shape[1] != 2:
-        raise ValueError("image_grounding_logits must be [B,N] or [B,2,N]")
-    if atomic_targets[sample_idx, 0] > 0.5:
-        return logits[sample_idx, 0, :]
-    if atomic_targets[sample_idx, 1] > 0.5:
-        return logits[sample_idx, 1, :]
-    return None
-
-
-def _select_text_grounding_scores(
-    logits: torch.Tensor,
-    probs: torch.Tensor,
-    atomic_targets: torch.Tensor,
-    sample_idx: int,
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    if logits.ndim == 2:
-        return logits[sample_idx], probs[sample_idx]
-    if logits.ndim != 3 or logits.shape[1] != 2:
-        raise ValueError("text_grounding_logits must be [B,N] or [B,2,N]")
-    if atomic_targets[sample_idx, 2] > 0.5:
-        return logits[sample_idx, 0, :], probs[sample_idx, 0, :]
-    if atomic_targets[sample_idx, 3] > 0.5:
-        return logits[sample_idx, 1, :], probs[sample_idx, 1, :]
-    return None, None
 
 
 def _router_sample_diagnostics(output: Any, batch_size: int) -> list[str]:

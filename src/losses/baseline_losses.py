@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 
 from src.models.outputs import BaselineOutput
+from src.losses.box_grounding import dense_box_grounding_loss, normalized_target_boxes
 
 
 @dataclass
@@ -51,7 +52,7 @@ class BaselineMultitaskLoss:
             output.atomic_logits,
             batch["atomic_target"].to(output.atomic_logits.dtype),
         )
-        image_grounding = masked_image_candidate_loss(output, batch)
+        image_grounding = masked_image_bbox_loss(output, batch)
         text_grounding = masked_text_grounding_loss(output, batch)
         total = (
             self.lambda_binary * binary
@@ -68,26 +69,23 @@ class BaselineMultitaskLoss:
         )
 
 
-def masked_image_candidate_loss(
+def masked_image_bbox_loss(
     output: BaselineOutput,
     batch: Mapping[str, torch.Tensor],
 ) -> torch.Tensor:
-    """Cross-entropy over legal candidates only for image-manipulated samples."""
+    """Dense bbox/heatmap loss using only raw-image patch predictions."""
 
     logits = output.image_grounding_logits
-    target = batch["manipulated_face_target_index"].to(logits.device)
-    applies = batch["has_image_manipulation"].to(logits.device).to(torch.bool) & (target >= 0)
-    if not bool(applies.any()):
-        return logits.sum() * 0.0
-    selected_logits = logits[applies]
-    selected_mask = output.image_grounding_mask.to(logits.device)[applies]
-    selected_target = target[applies]
-    valid_rows = selected_mask.gather(1, selected_target.unsqueeze(1)).squeeze(1)
-    if not bool(valid_rows.any()):
-        return logits.sum() * 0.0
-    selected_logits = selected_logits[valid_rows].masked_fill(~selected_mask[valid_rows], -1e4)
-    selected_target = selected_target[valid_rows]
-    return F.cross_entropy(selected_logits, selected_target)
+    applies = batch["has_image_manipulation"].to(logits.device).to(torch.bool)
+    targets = normalized_target_boxes(batch, device=logits.device, dtype=logits.dtype)
+    return dense_box_grounding_loss(
+        predicted_boxes=output.image_grounding_boxes,
+        patch_logits=logits,
+        patch_mask=output.image_grounding_mask.to(logits.device),
+        patch_boxes=output.image_grounding_patch_boxes,
+        target_boxes=targets,
+        valid_rows=applies,
+    )
 
 
 def masked_text_grounding_loss(

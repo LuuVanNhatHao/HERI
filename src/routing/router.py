@@ -51,10 +51,15 @@ class EvidenceReliabilityRouter(nn.Module):
                     output_weight_std=float(estimator_config["output_weight_std"]),
                 )
                 for family in ROUTED_FAMILIES
+                if self.family_enabled[family]
             }
         )
         self.reliability_embeddings = nn.ModuleDict(
-            {family: nn.Linear(1, self.feature_dim, bias=False) for family in ROUTED_FAMILIES}
+            {
+                family: nn.Linear(1, self.feature_dim, bias=False)
+                for family in ROUTED_FAMILIES
+                if self.family_enabled[family]
+            }
         )
         for embedding in self.reliability_embeddings.values():
             nn.init.normal_(

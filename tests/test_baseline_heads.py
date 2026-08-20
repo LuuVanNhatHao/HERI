@@ -1,21 +1,21 @@
 import torch
 
-from src.models.heads.image_grounding import pool_candidate_patches
+from src.models.heads.image_grounding import ImageGroundingHead
 from src.models.outputs import PatchGrid
 
 
-def test_tiny_face_uses_nearest_patch_without_target() -> None:
-    patch_tokens = torch.arange(4 * 3, dtype=torch.float32).reshape(1, 4, 3)
-    boxes = torch.tensor([[[1.0, 1.0, 2.0, 2.0]]])
-    mask = torch.tensor([[True]])
-    pooled = pool_candidate_patches(
-        patch_tokens=patch_tokens,
+def test_dense_image_grounding_uses_raw_patches_without_candidates() -> None:
+    head = ImageGroundingHead(fusion_dim=8, hidden_dim=12, dropout=0.0)
+    logits, mask, boxes, patch_boxes = head(
+        patch_tokens=torch.randn(2, 4, 5),
+        patch_mask=torch.ones(2, 4, dtype=torch.bool),
         patch_grid=PatchGrid(height=2, width=2, image_height=384, image_width=384),
-        candidate_boxes=boxes,
-        candidate_mask=mask,
+        fused_context=torch.randn(2, 8),
     )
-    assert pooled.shape == (1, 1, 9)
-    expected = torch.cat(
-        [patch_tokens[0, 0], patch_tokens[0, 0], torch.zeros_like(patch_tokens[0, 0])]
-    )
-    assert torch.equal(pooled[0, 0], expected)
+
+    assert logits.shape == (2, 4)
+    assert mask.shape == (2, 4)
+    assert boxes.shape == (2, 4)
+    assert patch_boxes.shape == (2, 4, 4)
+    assert torch.all((boxes >= 0) & (boxes <= 1))
+    assert torch.all(boxes[:, 2:] >= boxes[:, :2])

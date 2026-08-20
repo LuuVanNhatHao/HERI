@@ -22,6 +22,7 @@ def validate_binary_benchmark_config(
     required = [
         "project.name",
         "project.seed",
+        "project.architecture_version",
         "task.type",
         "task.primary_target",
         "task.negative_name",
@@ -57,6 +58,11 @@ def validate_binary_benchmark_config(
         "model.latent_slots.roles",
         "model.binary.aggregation",
         "model.binary.dropout",
+        "graph.reasoning.cycles",
+        "graph.reasoning.dynamic_rebuild",
+        "graph.reasoning.hypothesis_edge_reweighting",
+        "graph.edge_attention.enabled",
+        "graph.edge_attention.confidence_gate",
         "loss.lambda_bin",
         "loss.lambda_align",
         "loss.lambda_router",
@@ -122,6 +128,8 @@ def validate_binary_benchmark_config(
 
     if str(require_key(config, "task.type")) != PRIMARY_TASK:
         raise ConfigError(f"task.type must be {PRIMARY_TASK!r}")
+    if str(require_key(config, "project.architecture_version")) != "hera_binary_final_v1":
+        raise ConfigError("Binary benchmark architecture_version must be hera_binary_final_v1")
     adapter = str(require_key(config, "dataset.adapter")).strip().casefold()
     if adapter not in SUPPORTED_DATASETS:
         raise ConfigError(
@@ -175,6 +183,16 @@ def validate_binary_benchmark_config(
 
     if str(require_key(config, "model.model_type")) != "hera_binary_benchmark":
         raise ConfigError("model.model_type must be hera_binary_benchmark")
+    if int(require_key(config, "graph.reasoning.cycles")) != 2:
+        raise ConfigError("Final binary HERA requires exactly two reasoning cycles")
+    if not bool(require_key(config, "graph.reasoning.dynamic_rebuild")):
+        raise ConfigError("Final binary HERA requires dynamic graph rebuild")
+    if str(require_key(config, "graph.reasoning.hypothesis_edge_reweighting")) != "cosine":
+        raise ConfigError("Binary HERA hypothesis edge reweighting must be cosine")
+    if not bool(require_key(config, "graph.edge_attention.enabled")):
+        raise ConfigError("Final binary HERA requires edge-aware attention")
+    if str(require_key(config, "graph.edge_attention.confidence_gate")) != "direct":
+        raise ConfigError("Binary HERA edge confidence gate must be direct")
     if str(require_key(config, "model.binary.aggregation")) != "independent_head":
         raise ConfigError(
             "Binary-only datasets require an independent hypothesis-aggregation head; "

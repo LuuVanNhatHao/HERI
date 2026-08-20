@@ -57,26 +57,7 @@ def test_cross_sample_isolation_and_sample_a_stability() -> None:
 def test_zero_face_family_does_not_fabricate_nodes() -> None:
     config = graph_config()
     evidence = synthetic_evidence()
-    face_mask = torch.zeros_like(evidence.face.mask)
-    face = evidence.face
-    face = type(face)(
-        family=face.family,
-        features=face.features[:, :0, :],
-        mask=face_mask[:, :0],
-        source_indices=face.source_indices[:, :0],
-        provenance=face.provenance,
-        full_features=face.full_features,
-        full_mask=torch.zeros_like(face.full_mask),
-        full_source_indices=face.full_source_indices,
-    )
-    evidence = type(evidence)(
-        visual_semantic=evidence.visual_semantic,
-        visual_forensic=evidence.visual_forensic,
-        face=face,
-        text_alignment=evidence.text_alignment,
-        text_context=evidence.text_context,
-        cross_modal_metadata=evidence.cross_modal_metadata,
-    )
+    assert evidence.face.features.shape[1] == 0
     graph = HypothesisEvidenceGraphBuilder(config).build(
         evidence,
         HypothesisNodeInitializer(config)(batch_size=3),

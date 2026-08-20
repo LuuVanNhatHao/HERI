@@ -9,6 +9,7 @@ from torch import nn
 
 from src.evidence.outputs import EvidenceSet, PAD_WORD_ID
 from src.graph.schema import HYPOTHESIS_ORDER
+from src.models.fusion.projections import LazyFeatureProjection
 
 
 IMAGE_HYPOTHESIS_INDICES = (0, 1)
@@ -16,17 +17,14 @@ TEXT_HYPOTHESIS_INDICES = (2, 3)
 
 
 class HypothesisConditionedImageGroundingHead(nn.Module):
-    """Score every legal MTCNN face candidate conditioned on H_FS and H_FA."""
+    """Predict dense manipulation heatmaps and boxes from raw-image DINO patches."""
 
     def __init__(self, *, hidden_dim: int, dropout: float = 0.0, scoring: str = "dot_product") -> None:
         super().__init__()
         if scoring != "dot_product":
             raise ValueError("Phase-5 image grounding currently supports scoring='dot_product'")
         self.hidden_dim = int(hidden_dim)
-        self.face_key = nn.Sequential(
-            nn.LayerNorm(self.hidden_dim),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-        )
+        self.patch_key = LazyFeatureProjection(output_dim=self.hidden_dim, dropout=float(dropout))
         self.hypothesis_queries = nn.ModuleList(
             [
                 nn.Sequential(
@@ -37,33 +35,51 @@ class HypothesisConditionedImageGroundingHead(nn.Module):
                 for _ in IMAGE_HYPOTHESIS_INDICES
             ]
         )
+        self.box_regressors = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.LayerNorm(self.hidden_dim * 2 + 4),
+                    nn.Linear(self.hidden_dim * 2 + 4, self.hidden_dim),
+                    nn.GELU(),
+                    nn.Dropout(float(dropout)),
+                    nn.Linear(self.hidden_dim, 4),
+                )
+                for _ in IMAGE_HYPOTHESIS_INDICES
+            ]
+        )
 
     def forward(
         self,
         *,
         hypothesis_features: torch.Tensor,
-        face_evidence: EvidenceSet,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return logits/probabilities [B,2,N_face] and mask [B,N_face]."""
+        image_evidence: EvidenceSet,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return patch logits/probabilities, mask, and normalized boxes [B,2,4]."""
 
         _validate_hypotheses(hypothesis_features, self.hidden_dim)
-        face_evidence.validate()
-        face_features = face_evidence.features
-        if face_features.shape[0] != hypothesis_features.shape[0]:
-            raise ValueError("face_evidence batch size must match hypothesis_features")
-        if face_features.shape[-1] != self.hidden_dim:
-            raise ValueError("face_evidence hidden dimension mismatch")
-        mask = face_evidence.mask.to(torch.bool)
-        keys = self.face_key(face_features)
+        image_evidence.validate()
+        full_features, mask, normalized_patch_boxes = _dense_image_store(image_evidence)
+        if full_features.shape[0] != hypothesis_features.shape[0]:
+            raise ValueError("image_evidence batch size must match hypothesis_features")
+        keys = self.patch_key(full_features)
         logits = []
+        boxes = []
         scale = math.sqrt(float(self.hidden_dim))
         for local_head_index, hypothesis_index in enumerate(IMAGE_HYPOTHESIS_INDICES):
-            query = self.hypothesis_queries[local_head_index](hypothesis_features[:, hypothesis_index, :])
+            hypothesis = hypothesis_features[:, hypothesis_index, :]
+            query = self.hypothesis_queries[local_head_index](hypothesis)
             score = torch.sum(keys * query.unsqueeze(1), dim=-1) / scale
             logits.append(score)
+            attention = _masked_softmax(score, mask)
+            context = torch.sum(attention.unsqueeze(-1) * keys, dim=1)
+            geometric_prior = torch.sum(attention.unsqueeze(-1) * normalized_patch_boxes, dim=1)
+            parameters = self.box_regressors[local_head_index](
+                torch.cat([hypothesis, context, geometric_prior], dim=-1)
+            )
+            boxes.append(_normalized_center_size_box(parameters))
         stacked_logits = torch.stack(logits, dim=1).masked_fill(~mask.unsqueeze(1), -1e4)
-        probabilities = _masked_softmax(stacked_logits, mask.unsqueeze(1))
-        return stacked_logits, probabilities, mask
+        probabilities = torch.sigmoid(stacked_logits).masked_fill(~mask.unsqueeze(1), 0.0)
+        return stacked_logits, probabilities, mask, torch.stack(boxes, dim=1)
 
 
 class HypothesisConditionedTextGroundingHead(nn.Module):
@@ -141,34 +157,49 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
 
 
 class GenericImageGroundingHead(nn.Module):
-    """Ground manipulated faces without receiving manipulation hypotheses."""
+    """Dense bbox ablation without hypothesis-specific grounding queries."""
 
     def __init__(self, *, hidden_dim: int, dropout: float = 0.0) -> None:
         super().__init__()
         self.hidden_dim = int(hidden_dim)
-        self.candidate_scorer = nn.Sequential(
+        self.patch_key = LazyFeatureProjection(output_dim=self.hidden_dim, dropout=float(dropout))
+        self.patch_scorer = nn.Sequential(
             nn.LayerNorm(self.hidden_dim),
             nn.Dropout(float(dropout)),
             nn.Linear(self.hidden_dim, 1),
+        )
+        self.box_regressor = nn.Sequential(
+            nn.LayerNorm(self.hidden_dim + 4),
+            nn.Linear(self.hidden_dim + 4, self.hidden_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)),
+            nn.Linear(self.hidden_dim, 4),
         )
 
     def forward(
         self,
         *,
         hypothesis_features: torch.Tensor,
-        face_evidence: EvidenceSet,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        image_evidence: EvidenceSet,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         _validate_hypotheses(hypothesis_features, self.hidden_dim)
-        face_evidence.validate()
-        features = face_evidence.features
-        if features.shape[0] != hypothesis_features.shape[0] or features.shape[-1] != self.hidden_dim:
-            raise ValueError("face_evidence must be [B,N_face,D] and align with hypotheses")
-        mask = face_evidence.mask.to(torch.bool)
-        generic_logits = self.candidate_scorer(features).squeeze(-1)
+        image_evidence.validate()
+        full_features, mask, normalized_patch_boxes = _dense_image_store(image_evidence)
+        if full_features.shape[0] != hypothesis_features.shape[0]:
+            raise ValueError("image_evidence must align with hypotheses")
+        keys = self.patch_key(full_features)
+        generic_logits = self.patch_scorer(keys).squeeze(-1).masked_fill(~mask, -1e4)
+        attention = _masked_softmax(generic_logits, mask)
+        context = torch.sum(attention.unsqueeze(-1) * keys, dim=1)
+        geometric_prior = torch.sum(attention.unsqueeze(-1) * normalized_patch_boxes, dim=1)
+        generic_box = _normalized_center_size_box(
+            self.box_regressor(torch.cat([context, geometric_prior], dim=-1))
+        )
         logits = generic_logits.unsqueeze(1).expand(-1, len(IMAGE_HYPOTHESIS_INDICES), -1)
         logits = logits.masked_fill(~mask.unsqueeze(1), -1e4)
-        probabilities = _masked_softmax(logits, mask.unsqueeze(1))
-        return logits, probabilities, mask
+        probabilities = torch.sigmoid(logits).masked_fill(~mask.unsqueeze(1), 0.0)
+        boxes = generic_box.unsqueeze(1).expand(-1, len(IMAGE_HYPOTHESIS_INDICES), -1)
+        return logits, probabilities, mask, boxes
 
 
 class GenericTextGroundingHead(nn.Module):
@@ -237,3 +268,32 @@ def _masked_softmax(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     probabilities = probabilities.masked_fill(~mask, 0.0)
     denominator = probabilities.sum(dim=-1, keepdim=True).clamp_min(torch.finfo(probabilities.dtype).eps)
     return torch.where(mask.any(dim=-1, keepdim=True), probabilities / denominator, probabilities)
+
+
+def _dense_image_store(evidence: EvidenceSet) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if evidence.full_features is None:
+        raise ValueError("Dense image grounding requires visual_forensic.full_features")
+    if evidence.full_normalized_boxes is None:
+        raise ValueError("Dense image grounding requires visual_forensic.full_normalized_boxes")
+    features = evidence.full_features
+    mask = (
+        torch.ones(features.shape[:2], dtype=torch.bool, device=features.device)
+        if evidence.full_mask is None
+        else evidence.full_mask.to(device=features.device, dtype=torch.bool)
+    )
+    boxes = evidence.full_normalized_boxes.to(device=features.device, dtype=features.dtype)
+    if boxes.shape != features.shape[:2] + (4,):
+        raise ValueError("Dense image patch boxes must align with full image features")
+    return features, mask, boxes
+
+
+def _normalized_center_size_box(parameters: torch.Tensor) -> torch.Tensor:
+    """Map unconstrained parameters to ordered normalized xyxy boxes."""
+
+    if parameters.ndim != 2 or parameters.shape[-1] != 4:
+        raise ValueError("bbox parameters must be [B,4]")
+    anchor = torch.sigmoid(parameters[:, :2])
+    size = torch.sigmoid(parameters[:, 2:]).clamp(1e-4, 1.0)
+    top_left = anchor * (1.0 - size)
+    bottom_right = top_left + size
+    return torch.cat([top_left, bottom_right], dim=-1)

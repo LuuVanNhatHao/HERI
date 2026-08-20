@@ -3,8 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from src.evaluation.run import resolve_baseline_evaluation_artifacts
 from src.training.trainer import _resolve_baseline_resume_checkpoint
+from src.training.checkpoint import validate_baseline_checkpoint_config
 from src.utils.config import load_yaml_config, validate_baseline_config
 
 
@@ -41,6 +44,15 @@ def test_controlled_baseline_training_matches_hera_optimization_policy() -> None
             "text_grounding": hera["loss"]["lambda_txt"],
         }
         assert "stage_b_unfreeze_last_blocks" not in baseline["training"]["stages"]
+
+
+def test_legacy_baseline_checkpoint_architecture_is_rejected() -> None:
+    current = load_yaml_config("config/train_baseline_b0.yaml")
+    legacy = dict(current)
+    legacy["project"] = dict(current["project"])
+    legacy["project"].pop("architecture_version")
+    with pytest.raises(ValueError, match="architecture mismatch"):
+        validate_baseline_checkpoint_config(current, legacy, context="fixture")
 
 
 def _write_artifact_pair(run_dir: Path, *, timestamp: int) -> tuple[Path, Path]:

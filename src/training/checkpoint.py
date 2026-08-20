@@ -13,6 +13,31 @@ from src.training.state import TrainingState
 from src.training.optimizer import ensure_no_uninitialized_parameters
 
 
+def validate_baseline_checkpoint_config(
+    current_config: Mapping[str, Any],
+    checkpoint_config: Mapping[str, Any],
+    *,
+    context: str,
+) -> None:
+    """Reject legacy/cross-variant baseline checkpoints before loading weights."""
+
+    current_type = current_config.get("model", {}).get("baseline_type")
+    checkpoint_type = checkpoint_config.get("model", {}).get("baseline_type")
+    if checkpoint_type != current_type:
+        raise ValueError(
+            f"{context} baseline checkpoint mismatch: current={current_type!r}, "
+            f"checkpoint={checkpoint_type!r}"
+        )
+    current_version = current_config.get("project", {}).get("architecture_version")
+    checkpoint_version = checkpoint_config.get("project", {}).get("architecture_version")
+    if current_version != "baseline_dense_bbox_v1" or checkpoint_version != current_version:
+        raise ValueError(
+            f"{context} baseline architecture mismatch: current={current_version!r}, "
+            f"checkpoint={checkpoint_version!r}; final baselines require "
+            "'baseline_dense_bbox_v1'"
+        )
+
+
 def rng_state() -> dict[str, Any]:
     """Capture RNG state where practical."""
 

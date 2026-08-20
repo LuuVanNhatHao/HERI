@@ -17,7 +17,7 @@ from src.evaluation.summary import write_predictions_csv, write_summary_csv
 from src.experiments import get_hera_ablation_variant, validate_hera_checkpoint_variant
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADGM
-from src.training.checkpoint import load_checkpoint
+from src.training.checkpoint import restore_checkpoint
 from src.training.optimizer import ensure_no_uninitialized_parameters
 from src.training.precision import PrecisionManager
 from src.utils.config import dump_yaml
@@ -137,7 +137,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     checkpoint_path, thresholds_path = resolve_hera_evaluation_artifacts(config)
     tqdm.write(f"Resolved evaluation checkpoint: {checkpoint_path}")
     tqdm.write(f"Resolved validation thresholds: {thresholds_path}")
-    checkpoint = load_checkpoint(path=checkpoint_path, model=model, restore_rng=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     checkpoint_config = checkpoint.get("config")
     if not isinstance(checkpoint_config, Mapping):
         raise RuntimeError("Evaluation checkpoint does not contain its effective HERA config")
@@ -146,6 +146,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         checkpoint_config,
         context="Evaluation",
     )
+    restore_checkpoint(checkpoint=checkpoint, model=model, restore_rng=False)
     ensure_no_uninitialized_parameters(model, context="HERA evaluation checkpoint load")
     thresholds = _load_thresholds(thresholds_path, checkpoint_path=checkpoint_path)
     bundle = run_inference(
@@ -178,6 +179,11 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     run_info = {
         "run_id": run_id,
         "model_name": config["project"]["name"],
+        "architecture_version": config["project"]["architecture_version"],
+        "image_grounding_protocol": config["model"]["grounding"]["image"]["protocol"],
+        "grounding_routing": config["model"]["grounding"]["routing"],
+        "graph_reasoning_cycles": config["graph"]["reasoning"]["cycles"],
+        "dynamic_graph_rebuild": config["graph"]["reasoning"]["dynamic_rebuild"],
         "model_variant": f"hera_{ablation_variant}" if ablation_variant else "hera",
         "ablation_variant": ablation_variant or "canonical",
         "seed": config["project"]["seed"],

@@ -11,7 +11,6 @@ from torch import nn
 from src.models.outputs import BackboneOutputs
 
 from .cross_modal import cosine_similarity_metadata
-from .face import FaceEvidenceExtractor
 from .outputs import CrossModalMetadata, EvidenceSet, HeterogeneousEvidenceBatch
 from .projection import EvidenceProjectionBank
 from .text_alignment import TextAlignmentEvidenceExtractor
@@ -24,8 +23,6 @@ from .visual_semantic import VisualSemanticEvidenceExtractor
 class EvidenceStructuralMetadata:
     """Target-independent structural metadata consumed by the extractor."""
 
-    candidate_face_boxes: torch.Tensor
-    candidate_face_mask: torch.Tensor
     text_attention_mask: torch.Tensor | None = None
     text_grounding_mask: torch.Tensor | None = None
     text_word_ids: torch.Tensor | None = None
@@ -37,8 +34,6 @@ class EvidenceStructuralMetadata:
         """Create metadata from legal structural fields only."""
 
         return cls(
-            candidate_face_boxes=batch["candidate_face_boxes"],
-            candidate_face_mask=batch["candidate_face_mask"],
             text_attention_mask=batch.get("text_attention_mask"),
             text_grounding_mask=batch.get("text_grounding_mask"),
             text_word_ids=batch.get("text_word_ids"),
@@ -59,6 +54,11 @@ class HeterogeneousEvidenceExtractor(nn.Module):
         visual_semantic = config["visual_semantic"]
         visual_forensic = config["visual_forensic"]
         face = config["face"]
+        if bool(face.get("enabled", False)):
+            raise ValueError(
+                "Final HERA removed annotation-derived MTCNN face evidence; "
+                "set evidence.face.enabled=false"
+            )
         text_alignment = config["text_alignment"]
         text_context = config["text_context"]
         self.enabled = {
@@ -81,12 +81,6 @@ class HeterogeneousEvidenceExtractor(nn.Module):
             hidden_dim=self.hidden_dim,
             max_nodes=int(visual_forensic["max_nodes"]),
             budgeting=str(visual_forensic.get("budgeting", "spatial_balanced")),
-        )
-        self.face_extractor = FaceEvidenceExtractor(
-            projector=self.projections["face"],
-            truncate=bool(face.get("truncate", False)),
-            max_nodes=face.get("max_nodes"),
-            budgeting=str(face.get("budgeting", "ordered")),
         )
         self.text_alignment_extractor = TextAlignmentEvidenceExtractor(
             projector=self.projections["text_alignment"],
@@ -129,15 +123,7 @@ class HeterogeneousEvidenceExtractor(nn.Module):
             if self.enabled["visual_forensic"]
             else _empty_evidence("visual_forensic", batch_size, self.hidden_dim, device=device, dtype=dtype)
         )
-        face = (
-            self.face_extractor(
-                dinov3=encoder_outputs.dinov3,
-                candidate_boxes=structural_metadata.candidate_face_boxes,
-                candidate_mask=structural_metadata.candidate_face_mask,
-            )
-            if self.enabled["face"]
-            else _empty_evidence("face", batch_size, self.hidden_dim, device=device, dtype=dtype)
-        )
+        face = _empty_evidence("face", batch_size, self.hidden_dim, device=device, dtype=dtype)
         text_alignment = (
             self.text_alignment_extractor(encoder_outputs.siglip2)
             if self.enabled["text_alignment"]

@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 
 from src.models.hera.outputs import HERADecisionOutput
+from src.losses.box_grounding import dense_box_grounding_loss, normalized_target_boxes
 
 
 @dataclass
@@ -53,6 +54,10 @@ class HERAMultitaskLoss:
         self.lambda_txt = float(weights["lambda_txt"])
         self.lambda_ev = float(weights.get("lambda_ev", 0.0))
         self.lambda_align = float(weights.get("lambda_align", 0.0))
+        image_config = weights.get("image_grounding", {})
+        self.image_l1_weight = float(image_config.get("l1_weight", 1.0))
+        self.image_giou_weight = float(image_config.get("giou_weight", 1.0))
+        self.image_heatmap_weight = float(image_config.get("heatmap_weight", 0.25))
         regularization = (routing_config or {}).get("regularization", {})
         self.lambda_router = (
             float(regularization.get("weight", 0.0))
@@ -76,7 +81,14 @@ class HERAMultitaskLoss:
             binary = F.binary_cross_entropy_with_logits(output.binary_logit, binary_target)
         else:
             binary = target_consistent_noisy_or_loss(output.atomic_logits, atomic_target, binary_target)
-        image_grounding = hypothesis_image_grounding_loss(output, batch, atomic_target=atomic_target)
+        image_grounding = hypothesis_image_grounding_loss(
+            output,
+            batch,
+            atomic_target=atomic_target,
+            l1_weight=self.image_l1_weight,
+            giou_weight=self.image_giou_weight,
+            heatmap_weight=self.image_heatmap_weight,
+        )
         text_grounding = hypothesis_text_grounding_loss(output, batch, atomic_target=atomic_target)
         evidence = evidence_sufficiency_loss(output)
         alignment = _optional_scalar_loss(output, "cross_modal_alignment_loss")
@@ -146,34 +158,39 @@ def hypothesis_image_grounding_loss(
     batch: Mapping[str, torch.Tensor],
     *,
     atomic_target: torch.Tensor | None = None,
+    l1_weight: float = 1.0,
+    giou_weight: float = 1.0,
+    heatmap_weight: float = 0.25,
 ) -> torch.Tensor:
-    """Candidate-selection CE for the relevant FS/FA grounding head only."""
+    """Dense bbox/heatmap loss for the ground-truth FS/FA head during training."""
 
     logits = output.image_grounding_logits
-    face_mask = output.image_grounding_mask.to(device=logits.device, dtype=torch.bool)
-    target_index = batch["manipulated_face_target_index"].to(device=logits.device, dtype=torch.long)
+    patch_mask = output.image_grounding_mask.to(device=logits.device, dtype=torch.bool)
+    target_boxes = normalized_target_boxes(batch, device=logits.device, dtype=logits.dtype)
     if atomic_target is None:
         atomic_target = batch["atomic_target"].to(device=logits.device, dtype=logits.dtype)
     applies = image_grounding_applicability(atomic_target.to(device=logits.device))
-    if target_index.shape != (logits.shape[0],):
-        raise ValueError("manipulated_face_target_index must be [B]")
-    if face_mask.shape != logits.shape[0:1] + logits.shape[2:3]:
+    if patch_mask.shape != logits.shape[0:1] + logits.shape[2:3]:
         raise ValueError("image grounding mask shape mismatch")
 
     losses: list[torch.Tensor] = []
     for head_index in range(2):
-        valid_rows = applies[:, head_index] & (target_index >= 0) & (target_index < logits.shape[-1])
+        valid_rows = applies[:, head_index]
         if not bool(valid_rows.any()):
             continue
-        selected_mask = face_mask[valid_rows]
-        selected_target = target_index[valid_rows]
-        target_is_valid = selected_mask.gather(1, selected_target.unsqueeze(1)).squeeze(1)
-        if not bool(target_is_valid.any()):
-            continue
-        selected_logits = logits[valid_rows, head_index, :][target_is_valid]
-        selected_mask = selected_mask[target_is_valid]
-        selected_target = selected_target[target_is_valid]
-        losses.append(F.cross_entropy(selected_logits.masked_fill(~selected_mask, -1e4), selected_target))
+        losses.append(
+            dense_box_grounding_loss(
+                predicted_boxes=output.image_grounding_boxes[:, head_index, :],
+                patch_logits=logits[:, head_index, :],
+                patch_mask=patch_mask,
+                patch_boxes=output.image_grounding_patch_boxes,
+                target_boxes=target_boxes,
+                valid_rows=valid_rows,
+                l1_weight=l1_weight,
+                giou_weight=giou_weight,
+                heatmap_weight=heatmap_weight,
+            )
+        )
     if not losses:
         return logits.sum() * 0.0
     return torch.stack(losses).mean()

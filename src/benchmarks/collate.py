@@ -8,7 +8,7 @@ import torch
 
 
 def binary_benchmark_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
-    """Pad variable text/face tensors while preserving signal availability."""
+    """Pad variable text tensors while preserving signal availability."""
 
     if not batch:
         raise ValueError("Cannot collate an empty binary benchmark batch")
@@ -40,14 +40,6 @@ def binary_benchmark_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "text_grounding_mask": _pad_1d(
             [item["text_grounding_mask"] for item in batch], False, torch.bool
         ),
-        "candidate_face_boxes": _pad_2d(
-            [item["candidate_face_boxes"] for item in batch],
-            width=4,
-            dtype=torch.float32,
-        ),
-        "candidate_face_mask": _pad_1d(
-            [item["candidate_face_mask"] for item in batch], False, torch.bool
-        ),
         "binary_target": torch.stack([item["binary_target"] for item in batch]),
         "binary_available": torch.stack([item["binary_available"] for item in batch]),
         "subtype_target": torch.stack([item["subtype_target"] for item in batch]),
@@ -69,15 +61,4 @@ def _pad_1d(
     result = torch.full((len(tensors), length), pad_value, dtype=dtype)
     for row, tensor in enumerate(tensors):
         result[row, : tensor.shape[0]] = tensor.to(dtype=dtype)
-    return result
-
-
-def _pad_2d(
-    tensors: list[torch.Tensor], *, width: int, dtype: torch.dtype
-) -> torch.Tensor:
-    length = max((int(tensor.shape[0]) for tensor in tensors), default=0)
-    result = torch.zeros((len(tensors), length, width), dtype=dtype)
-    for row, tensor in enumerate(tensors):
-        if tensor.numel():
-            result[row, : tensor.shape[0], :] = tensor.to(dtype=dtype)
     return result

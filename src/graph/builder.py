@@ -12,7 +12,6 @@ from src.evidence.outputs import EvidenceSet, HeterogeneousEvidenceBatch
 from .edges import (
     LocalEdgePairs,
     evidence_to_hypothesis_pairs,
-    hypothesis_to_evidence_pairs,
     reverse_pairs,
     similarity_topk_pairs,
     spatial_knn_pairs,
@@ -84,7 +83,9 @@ class HypothesisEvidenceGraphBuilder:
             HYPOTHESIS: _hypothesis_store(hypothesis_features),
         }
         edge_index_dict, edge_sample_indices, edge_attr_dict = self._build_edges(
-            evidence=evidence, stores=stores
+            evidence=evidence,
+            stores=stores,
+            hypothesis_features=hypothesis_features,
         )
         graph = GraphBatch(
             x_dict={node_type: store.features for node_type, store in stores.items()},
@@ -109,6 +110,7 @@ class HypothesisEvidenceGraphBuilder:
         *,
         evidence: HeterogeneousEvidenceBatch,
         stores: Mapping[str, _NodeStore],
+        hypothesis_features: torch.Tensor,
     ) -> tuple[
         dict[EdgeType, torch.Tensor],
         dict[EdgeType, torch.Tensor],
@@ -207,24 +209,40 @@ class HypothesisEvidenceGraphBuilder:
                 pairs=reverse_pairs(pairs),
             )
 
-        self._add_evidence_support_edges(edge_index_dict, edge_sample_indices, evidence, stores)
+        self._add_evidence_support_edges(
+            edge_index_dict,
+            edge_sample_indices,
+            edge_attr_dict,
+            evidence,
+            stores,
+            hypothesis_features,
+        )
         if self.feedback_enabled and bool(self.edge_config.get("feedback", {}).get("enabled", True)):
-            self._add_feedback_edges(edge_index_dict, edge_sample_indices, evidence, stores)
-        for edge_type in CANONICAL_EDGE_TYPES:
-            edge_attr_dict.setdefault(
-                edge_type,
-                evidence.visual_semantic.features.new_zeros(
-                    (edge_index_dict[edge_type].shape[1], 2)
-                ),
+            self._add_feedback_edges(
+                edge_index_dict,
+                edge_sample_indices,
+                edge_attr_dict,
+                evidence,
+                stores,
+                hypothesis_features,
             )
+        for edge_type in CANONICAL_EDGE_TYPES:
+            if edge_type not in edge_attr_dict:
+                edge_count = edge_index_dict[edge_type].shape[1]
+                attrs = evidence.visual_semantic.features.new_zeros((edge_count, 2))
+                if edge_count:
+                    attrs[:, 1] = 1.0
+                edge_attr_dict[edge_type] = attrs
         return edge_index_dict, edge_sample_indices, edge_attr_dict
 
     def _add_evidence_support_edges(
         self,
         edge_index_dict: dict[EdgeType, torch.Tensor],
         edge_sample_indices: dict[EdgeType, torch.Tensor],
+        edge_attr_dict: dict[EdgeType, torch.Tensor],
         evidence: HeterogeneousEvidenceBatch,
         stores: Mapping[str, _NodeStore],
+        hypothesis_features: torch.Tensor,
     ) -> None:
         for source_type, evidence_set, hypotheses in (
             (VISUAL_FORENSIC, evidence.visual_forensic, ("FS", "FA")),
@@ -233,17 +251,20 @@ class HypothesisEvidenceGraphBuilder:
         ):
             for hypothesis in hypotheses:
                 relation = _support_relation(hypothesis)
-                pairs = evidence_to_hypothesis_pairs(
-                    evidence_mask=evidence_set.mask,
+                pairs = _hypothesis_conditioned_pairs(
+                    evidence_set=evidence_set,
+                    hypothesis_features=hypothesis_features,
                     hypothesis_indices=(HYPOTHESIS_TO_INDEX[hypothesis],),
                 )
+                edge_type = (source_type, relation, HYPOTHESIS)
                 self._add_pairs(
                     edge_index_dict,
                     edge_sample_indices,
                     stores,
-                    edge_type=(source_type, relation, HYPOTHESIS),
+                    edge_type=edge_type,
                     pairs=pairs,
                 )
+                edge_attr_dict[edge_type] = _pair_attributes(pairs, stores, edge_type)
 
         semantic_config = self.edge_config.get("semantic_to_hypotheses", {})
         if not bool(semantic_config.get("enabled", True)):
@@ -254,47 +275,58 @@ class HypothesisEvidenceGraphBuilder:
         ):
             for hypothesis in ("FS", "FA", "TS", "TA"):
                 relation = _support_relation(hypothesis)
-                pairs = evidence_to_hypothesis_pairs(
-                    evidence_mask=evidence_set.mask,
+                pairs = _hypothesis_conditioned_pairs(
+                    evidence_set=evidence_set,
+                    hypothesis_features=hypothesis_features,
                     hypothesis_indices=(HYPOTHESIS_TO_INDEX[hypothesis],),
                 )
+                edge_type = (source_type, relation, HYPOTHESIS)
                 self._add_pairs(
                     edge_index_dict,
                     edge_sample_indices,
                     stores,
-                    edge_type=(source_type, relation, HYPOTHESIS),
+                    edge_type=edge_type,
                     pairs=pairs,
                 )
+                edge_attr_dict[edge_type] = _pair_attributes(pairs, stores, edge_type)
 
     def _add_feedback_edges(
         self,
         edge_index_dict: dict[EdgeType, torch.Tensor],
         edge_sample_indices: dict[EdgeType, torch.Tensor],
+        edge_attr_dict: dict[EdgeType, torch.Tensor],
         evidence: HeterogeneousEvidenceBatch,
         stores: Mapping[str, _NodeStore],
+        hypothesis_features: torch.Tensor,
     ) -> None:
         feedback_config = self.edge_config.get("feedback", {})
-        for edge_type, evidence_mask, hypotheses in (
-            ((HYPOTHESIS, QUERIES_FACE, FACE), evidence.face.mask, ("FS", "FA")),
-            ((HYPOTHESIS, QUERIES_VISUAL_FORENSIC, VISUAL_FORENSIC), evidence.visual_forensic.mask, ("FS", "FA")),
-            ((HYPOTHESIS, QUERIES_TEXT_CONTEXT, TEXT_CONTEXT), evidence.text_context.mask, ("TS", "TA")),
+        for edge_type, evidence_set, hypotheses in (
+            ((HYPOTHESIS, QUERIES_FACE, FACE), evidence.face, ("FS", "FA")),
+            ((HYPOTHESIS, QUERIES_VISUAL_FORENSIC, VISUAL_FORENSIC), evidence.visual_forensic, ("FS", "FA")),
+            ((HYPOTHESIS, QUERIES_TEXT_CONTEXT, TEXT_CONTEXT), evidence.text_context, ("TS", "TA")),
         ):
-            pairs = hypothesis_to_evidence_pairs(
-                evidence_mask=evidence_mask,
+            support_pairs = _hypothesis_conditioned_pairs(
+                evidence_set=evidence_set,
+                hypothesis_features=hypothesis_features,
                 hypothesis_indices=tuple(HYPOTHESIS_TO_INDEX[name] for name in hypotheses),
             )
+            pairs = reverse_pairs(support_pairs)
             self._add_pairs(edge_index_dict, edge_sample_indices, stores, edge_type=edge_type, pairs=pairs)
+            edge_attr_dict[edge_type] = _pair_attributes(pairs, stores, edge_type)
 
         if bool(feedback_config.get("semantic_feedback", False)):
-            for edge_type, evidence_mask in (
-                ((HYPOTHESIS, QUERIES_VISUAL_SEMANTIC, VISUAL_SEMANTIC), evidence.visual_semantic.mask),
-                ((HYPOTHESIS, QUERIES_TEXT_ALIGNMENT, TEXT_ALIGNMENT), evidence.text_alignment.mask),
+            for edge_type, evidence_set in (
+                ((HYPOTHESIS, QUERIES_VISUAL_SEMANTIC, VISUAL_SEMANTIC), evidence.visual_semantic),
+                ((HYPOTHESIS, QUERIES_TEXT_ALIGNMENT, TEXT_ALIGNMENT), evidence.text_alignment),
             ):
-                pairs = hypothesis_to_evidence_pairs(
-                    evidence_mask=evidence_mask,
+                support_pairs = _hypothesis_conditioned_pairs(
+                    evidence_set=evidence_set,
+                    hypothesis_features=hypothesis_features,
                     hypothesis_indices=(0, 1, 2, 3),
                 )
+                pairs = reverse_pairs(support_pairs)
                 self._add_pairs(edge_index_dict, edge_sample_indices, stores, edge_type=edge_type, pairs=pairs)
+                edge_attr_dict[edge_type] = _pair_attributes(pairs, stores, edge_type)
 
     def _add_pairs(
         self,
@@ -423,7 +455,10 @@ def _pair_attributes(
     dst_global = stores[dst_type].lookup[pairs.samples, pairs.dst_local]
     valid = (src_global >= 0) & (dst_global >= 0)
     if pairs.strengths is None:
-        return stores[src_type].features.new_zeros((int(valid.sum().item()), 2))
+        attrs = stores[src_type].features.new_zeros((int(valid.sum().item()), 2))
+        if attrs.numel():
+            attrs[:, 1] = 1.0
+        return attrs
     confidence = (
         torch.ones_like(pairs.strengths)
         if pairs.confidences is None
@@ -431,4 +466,41 @@ def _pair_attributes(
     )
     return torch.stack([pairs.strengths[valid], confidence[valid]], dim=-1).to(
         dtype=stores[src_type].features.dtype
+    )
+
+
+def _hypothesis_conditioned_pairs(
+    *,
+    evidence_set: EvidenceSet,
+    hypothesis_features: torch.Tensor,
+    hypothesis_indices: tuple[int, ...],
+) -> LocalEdgePairs:
+    """Build support edges whose strength and confidence reflect current graph state."""
+
+    pairs = evidence_to_hypothesis_pairs(
+        evidence_mask=evidence_set.mask,
+        hypothesis_indices=hypothesis_indices,
+    )
+    if pairs.samples.numel() == 0:
+        empty = evidence_set.features.new_zeros((0,))
+        return LocalEdgePairs(
+            samples=pairs.samples,
+            src_local=pairs.src_local,
+            dst_local=pairs.dst_local,
+            strengths=empty,
+            confidences=empty,
+        )
+    evidence_features = evidence_set.features[pairs.samples, pairs.src_local].float()
+    hypotheses = hypothesis_features[pairs.samples, pairs.dst_local].float()
+    strengths = torch.nn.functional.cosine_similarity(evidence_features, hypotheses, dim=-1)
+    if evidence_set.reliability_scores is None:
+        confidences = torch.ones_like(strengths)
+    else:
+        confidences = evidence_set.reliability_scores[pairs.samples, pairs.src_local].float()
+    return LocalEdgePairs(
+        samples=pairs.samples,
+        src_local=pairs.src_local,
+        dst_local=pairs.dst_local,
+        strengths=strengths.to(evidence_set.features.dtype),
+        confidences=confidences.to(evidence_set.features.dtype).clamp(0.0, 1.0),
     )

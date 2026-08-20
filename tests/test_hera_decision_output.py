@@ -15,7 +15,9 @@ def test_hera_decision_output_contract_and_noisy_or_consistency() -> None:
     output = module(graph_output)
     output.validate()
     assert output.atomic_logits.shape == (3, 4)
-    assert output.image_grounding_logits.shape == (3, 2, 3)
+    assert output.image_grounding_logits.shape == (3, 2, 4)
+    assert output.image_grounding_boxes.shape == (3, 2, 4)
+    assert output.metadata["annotation_mtcnn_boxes_used"] is False
     assert output.text_grounding_logits.shape == (3, 2, 5)
     expected = noisy_or_from_probabilities(output.atomic_probabilities)
     assert torch.allclose(output.binary_probability, expected, atol=1e-6)

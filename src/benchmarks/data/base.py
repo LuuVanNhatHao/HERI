@@ -93,8 +93,6 @@ class BinaryBenchmarkDataset(Dataset[dict[str, Any]], ABC):
             "text_grounding_mask": torch.tensor(
                 encoded["grounding_mask"], dtype=torch.bool
             ),
-            "candidate_face_boxes": torch.empty((0, 4), dtype=torch.float32),
-            "candidate_face_mask": torch.empty((0,), dtype=torch.bool),
             "binary_target": torch.tensor(
                 float(record.binary_target), dtype=torch.float32
             ),

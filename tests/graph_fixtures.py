@@ -8,7 +8,13 @@ from src.evidence import EvidenceStructuralMetadata, HeterogeneousEvidenceExtrac
 from src.evidence.outputs import HeterogeneousEvidenceBatch
 
 
-def graph_config(hidden_dim: int = 12, *, cycles: int = 1, feedback: bool = True) -> dict:
+def graph_config(
+    hidden_dim: int = 12,
+    *,
+    cycles: int = 1,
+    feedback: bool = True,
+    dynamic_rebuild: bool = False,
+) -> dict:
     return {
         "type": "hgt",
         "hidden_dim": hidden_dim,
@@ -17,7 +23,12 @@ def graph_config(hidden_dim: int = 12, *, cycles: int = 1, feedback: bool = True
         "dropout": 0.0,
         "hypothesis_init_std": 0.02,
         "input_dims": {},
-        "reasoning": {"cycles": cycles, "hypothesis_feedback": feedback},
+        "reasoning": {
+            "cycles": cycles,
+            "hypothesis_feedback": feedback,
+            "dynamic_rebuild": dynamic_rebuild,
+            "hypothesis_edge_reweighting": "cosine",
+        },
         "edges": {
             "visual_semantic_visual_forensic": {
                 "method": "spatial_knn",

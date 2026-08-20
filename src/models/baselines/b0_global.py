@@ -69,11 +69,10 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
         )
         binary_logit = self.binary_head(fused)
         atomic_logits = self.attribution_head(fused)
-        image_logits, image_mask = self.image_grounding_head(
+        image_logits, image_mask, image_boxes, image_patch_boxes = self.image_grounding_head(
             patch_tokens=encoded.dinov3.patch_tokens,
+            patch_mask=encoded.dinov3.patch_mask,
             patch_grid=encoded.dinov3.patch_grid,
-            candidate_boxes=batch["candidate_face_boxes"],
-            candidate_mask=batch["candidate_face_mask"],
             fused_context=fused,
         )
         text_logits, text_mask = self.text_grounding_head(
@@ -96,6 +95,8 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
             atomic_probabilities=torch.sigmoid(atomic_logits),
             image_grounding_logits=image_logits,
             image_grounding_mask=image_mask,
+            image_grounding_boxes=image_boxes,
+            image_grounding_patch_boxes=image_patch_boxes,
             text_grounding_logits=text_logits,
             text_grounding_mask=text_mask,
             metadata={"baseline_type": "b0_global"},

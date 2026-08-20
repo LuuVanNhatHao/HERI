@@ -12,8 +12,8 @@ from PIL import Image
 from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 
-from .bbox import best_iou_match, validate_box, validate_boxes
-from .constants import ABSENT_BOX, ABSENT_INDEX
+from .bbox import validate_box
+from .constants import ABSENT_BOX
 from .labels import (
     atomic_target,
     binary_target,
@@ -27,7 +27,6 @@ from .transforms import (
     image_content_mask,
     preprocess_image,
     transform_box_with_meta,
-    transform_boxes_with_meta,
 )
 
 
@@ -162,21 +161,8 @@ class DGM4Dataset(Dataset[dict[str, Any]]):
             )
 
         image_size = (original_size[0], original_size[1])
-        candidate_boxes_original = validate_boxes(
-            row["mtcnn_boxes"],
-            image_size=image_size,
-            field_name="mtcnn_boxes",
-        )
-        candidate_face_boxes = transform_boxes_with_meta(
-            candidate_boxes_original,
-            transform_meta,
-        )
-
         image_manipulated = has_image_manipulation(fake_cls)
-        fake_image_box_original = None
         fake_image_box_target = torch.tensor(ABSENT_BOX, dtype=torch.float32)
-        manipulated_face_target_index = ABSENT_INDEX
-        manipulated_face_target_iou = 0.0
         if image_manipulated:
             fake_image_box_original = validate_box(
                 row["fake_image_box"],
@@ -185,10 +171,6 @@ class DGM4Dataset(Dataset[dict[str, Any]]):
             )
             transformed_box = transform_box_with_meta(fake_image_box_original, transform_meta)
             fake_image_box_target = torch.tensor(transformed_box, dtype=torch.float32)
-            manipulated_face_target_index, manipulated_face_target_iou = best_iou_match(
-                fake_image_box_original,
-                candidate_boxes_original,
-            )
 
         text = row["text"]
         words = text.split()
@@ -218,18 +200,8 @@ class DGM4Dataset(Dataset[dict[str, Any]]):
             "words": words,
             "binary_target": torch.tensor(binary_target(fake_cls), dtype=torch.float32),
             "atomic_target": torch.tensor(atomic_target(fake_cls), dtype=torch.float32),
-            "candidate_face_boxes": torch.tensor(candidate_face_boxes, dtype=torch.float32),
-            "candidate_face_mask": torch.ones(len(candidate_face_boxes), dtype=torch.bool),
             "fake_image_box_target": fake_image_box_target,
             "has_image_manipulation": torch.tensor(image_manipulated, dtype=torch.bool),
-            "manipulated_face_target_index": torch.tensor(
-                manipulated_face_target_index,
-                dtype=torch.long,
-            ),
-            "manipulated_face_target_iou": torch.tensor(
-                manipulated_face_target_iou,
-                dtype=torch.float32,
-            ),
             "fake_text_pos": torch.tensor(fake_text_pos, dtype=torch.long),
             "text_grounding_target": torch.tensor(text_alignment.labels, dtype=torch.long),
             "text_grounding_mask": torch.tensor(text_alignment.mask, dtype=torch.bool),

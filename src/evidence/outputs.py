@@ -31,6 +31,11 @@ class EvidenceSet:
     full_mask: torch.Tensor | None = None
     full_source_indices: torch.Tensor | None = None
     full_word_ids: torch.Tensor | None = None
+    full_spatial_centers: torch.Tensor | None = None
+    full_spatial_boxes: torch.Tensor | None = None
+    full_normalized_centers: torch.Tensor | None = None
+    full_normalized_boxes: torch.Tensor | None = None
+    reliability_scores: torch.Tensor | None = None
 
     def validate(self) -> None:
         """Validate shape, mask, and provenance invariants."""
@@ -57,6 +62,15 @@ class EvidenceSet:
         self._validate_optional_tensor(self.spatial_boxes, "spatial_boxes", (batch, nodes, 4))
         self._validate_optional_tensor(self.normalized_centers, "normalized_centers", (batch, nodes, 2))
         self._validate_optional_tensor(self.normalized_boxes, "normalized_boxes", (batch, nodes, 4))
+        self._validate_optional_tensor(self.reliability_scores, "reliability_scores", (batch, nodes))
+        if self.reliability_scores is not None:
+            valid_scores = self.reliability_scores[self.mask]
+            if valid_scores.numel() and (
+                (valid_scores < -1e-6).any() or (valid_scores > 1.0 + 1e-6).any()
+            ):
+                raise ValueError(f"{self.family}.reliability_scores must stay in [0,1]")
+            if bool((self.reliability_scores[~self.mask] != 0).any()):
+                raise ValueError(f"{self.family}.reliability_scores must be zero for padded nodes")
         self._validate_coordinates()
         self._validate_full_store()
 
@@ -108,6 +122,25 @@ class EvidenceSet:
             raise ValueError(f"{self.family}.full_source_indices shape mismatch")
         if self.full_word_ids is not None and self.full_word_ids.shape != (batch, full_nodes):
             raise ValueError(f"{self.family}.full_word_ids shape mismatch")
+        for name, width in (
+            ("full_spatial_centers", 2),
+            ("full_spatial_boxes", 4),
+            ("full_normalized_centers", 2),
+            ("full_normalized_boxes", 4),
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                expected = (batch, full_nodes, width)
+                if value.shape != expected:
+                    raise ValueError(f"{self.family}.{name} must be {expected}")
+                if not torch.isfinite(value).all():
+                    raise FloatingPointError(f"{self.family}.{name} contains non-finite values")
+        for name in ("full_normalized_centers", "full_normalized_boxes"):
+            value = getattr(self, name)
+            if value is not None and value.numel() and (
+                (value < -1e-6).any() or (value > 1.0 + 1e-6).any()
+            ):
+                raise ValueError(f"{self.family}.{name} must stay in [0,1]")
         if not bool(self.mask.any()):
             return
         selected = self.source_indices[self.mask]
