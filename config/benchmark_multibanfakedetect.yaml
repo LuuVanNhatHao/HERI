@@ -1,8 +1,8 @@
 project:
-  name: HERA-MultiBanFakeDetect-BanglaBERT
+  name: HERA-MultiBanFakeDetect-Compact
   seed: 42
   architecture_version: hera_binary_final_v2
-  config_name: benchmark_multibanfakedetect_banglabert
+  config_name: benchmark_multibanfakedetect_compact_v1
 
 task:
   type: binary_multimodal
@@ -51,7 +51,7 @@ image:
 
 tokenizer:
   enabled: true
-  name: csebuetnlp/banglabert
+  name: csebuetnlp/banglabert_small
   use_fast: true
   max_length: 256
   local_files_only: false
@@ -59,7 +59,7 @@ tokenizer:
 
 backbones:
   siglip2:
-    name: google/siglip2-so400m-patch14-384
+    name: google/siglip2-base-patch16-384
     revision:
     local_files_only: false
     trust_remote_code: false
@@ -67,14 +67,14 @@ backbones:
     image_std: [0.5, 0.5, 0.5]
     text_max_length: 64
   dinov3:
-    name: facebook/dinov3-vitl16-pretrain-lvd1689m
+    name: facebook/dinov3-vits16-pretrain-lvd1689m
     revision:
     local_files_only: false
     trust_remote_code: false
     image_mean: [0.485, 0.456, 0.406]
     image_std: [0.229, 0.224, 0.225]
   deberta:
-    name: csebuetnlp/banglabert
+    name: csebuetnlp/banglabert_small
     revision:
     local_files_only: false
     trust_remote_code: false
@@ -177,9 +177,9 @@ loss:
   lambda_text_label: 0.0
 
 training:
-  epochs: 12
-  micro_batch_size: 4
-  gradient_accumulation_steps: 4
+  epochs: 8
+  micro_batch_size: 16
+  gradient_accumulation_steps: 1
   max_grad_norm: 1.0
   resume_from:
   auto_resume:
@@ -190,9 +190,9 @@ training:
     enabled: true
     metric: macro_f1
     mode: max
-    patience: 3
+    patience: 2
     min_delta: 0.001
-    minimum_backbone_adaptation_epochs: 3
+    minimum_backbone_adaptation_epochs: 1
   stages:
     stage_a_freeze_epochs: 3
     stage_b_full_unfreeze: {enabled: true, start_epoch: 4}
@@ -200,7 +200,7 @@ training:
 optimizer:
   type: adamw
   lr_new: 0.00005
-  lr_backbones: {siglip2: 0.0000005, dinov3: 0.0000005, deberta: 0.000001}
+  lr_backbones: {siglip2: 0.000001, dinov3: 0.000001, deberta: 0.000002}
   weight_decay: 0.02
   betas: [0.9, 0.999]
   eps: 0.00000001
@@ -224,7 +224,7 @@ checkpointing:
   minimum_free_gib: 20
 
 dataloader:
-  batch_size: 4
+  batch_size: 16
   num_workers: 16
   worker_threads: 1
   pin_memory: true
@@ -260,4 +260,4 @@ evaluation:
 
 progress: {enabled: true}
 logging: {level: INFO}
-output: {root: outputs/benchmarks_final/multibanfakedetect_banglabert}
+output: {root: outputs/benchmarks_final/multibanfakedetect_compact_v1}

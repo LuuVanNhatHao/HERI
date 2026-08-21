@@ -145,10 +145,15 @@ latent evidence slots. It does not instantiate or supervise DGM4 attribution
 and grounding heads. Dataset-native auxiliary signals (`subtype` for
 MultiBanFakeDetect and `text_label` for VLDBench) are independently gated by
 `task.signals` and matching loss weights; both are off in the canonical YAMLs.
-The canonical MultiBanFakeDetect configuration uses the compact 110M
-`csebuetnlp/banglabert` contextual encoder and its pinned official Bengali
-normalization pipeline. The normalizer is applied once when each dataset split
-is materialized, before both contextual tokenization and multimodal reasoning.
+The canonical MultiBanFakeDetect configuration is a dataset-scale compact
+delivery: `google/siglip2-base-patch16-384`,
+`facebook/dinov3-vits16-pretrain-lvd1689m`, and the 13M
+`csebuetnlp/banglabert_small` contextual encoder. It preserves 384-pixel input
+geometry and uses the pinned official Bengali normalization pipeline. The
+normalizer is applied once when each dataset split is materialized, before both
+contextual tokenization and multimodal reasoning. Its isolated
+`multibanfakedetect_compact_v1` output root cannot auto-resume an older
+large-backbone run.
 
 Prepare and audit the real releases before training:
 
@@ -168,7 +173,7 @@ checkpoint, then train/evaluate:
 ```bash
 python scripts/binary_benchmark_capacity_test.py \
   config/benchmark_multibanfakedetect.yaml \
-  --batch-size 4 --batches 4 --gradient-accumulation-steps 4
+  --batch-size 16 --batches 4 --gradient-accumulation-steps 1
 
 python scripts/train_binary_benchmark.py config/benchmark_multibanfakedetect.yaml
 python scripts/evaluate_binary_benchmark.py config/benchmark_multibanfakedetect.yaml

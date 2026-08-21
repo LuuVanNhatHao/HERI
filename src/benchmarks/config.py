@@ -343,10 +343,21 @@ def _validate_dataset_specific(
                 "The official MultiBanFakeDetect protocol preserves released duplicates; "
                 "cross_split_duplicate_policy must be report_only"
             )
-        if str(require_key(config, "tokenizer.name")) != "csebuetnlp/banglabert":
+        compact_backbones = {
+            "backbones.siglip2.name": "google/siglip2-base-patch16-384",
+            "backbones.dinov3.name": "facebook/dinov3-vits16-pretrain-lvd1689m",
+            "backbones.deberta.name": "csebuetnlp/banglabert_small",
+        }
+        for key, expected in compact_backbones.items():
+            if str(require_key(config, key)) != expected:
+                raise ConfigError(
+                    "Canonical MultiBanFakeDetect requires the compact backbone "
+                    f"{key}={expected!r}"
+                )
+        if str(require_key(config, "tokenizer.name")) != "csebuetnlp/banglabert_small":
             raise ConfigError(
                 "Canonical MultiBanFakeDetect requires the compact language-specific "
-                "csebuetnlp/banglabert text backbone"
+                "csebuetnlp/banglabert_small tokenizer"
             )
         normalization_prefix = "dataset.text.normalization"
         if not bool(require_key(config, f"{normalization_prefix}.enabled")):

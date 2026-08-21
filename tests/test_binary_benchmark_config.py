@@ -64,12 +64,14 @@ def test_capacity_config_is_full_ft_and_never_writes_training_checkpoints() -> N
     assert capacity["dataloader"]["batch_size"] == 2
 
 
-def test_multiban_uses_compact_banglabert_and_isolates_the_new_run() -> None:
+def test_multiban_uses_all_compact_backbones_and_isolates_the_new_run() -> None:
     config = load_yaml_config(CONFIGS[0])
     validate_binary_benchmark_config(config, mode="prepare")
 
-    assert config["tokenizer"]["name"] == "csebuetnlp/banglabert"
-    assert config["backbones"]["deberta"]["name"] == "csebuetnlp/banglabert"
+    assert config["tokenizer"]["name"] == "csebuetnlp/banglabert_small"
+    assert config["backbones"]["siglip2"]["name"] == "google/siglip2-base-patch16-384"
+    assert config["backbones"]["dinov3"]["name"] == "facebook/dinov3-vits16-pretrain-lvd1689m"
+    assert config["backbones"]["deberta"]["name"] == "csebuetnlp/banglabert_small"
     assert config["dataset"]["text"]["normalization"] == {
         "enabled": True,
         "provider": "csebuetnlp/normalizer",
@@ -79,9 +81,33 @@ def test_multiban_uses_compact_banglabert_and_isolates_the_new_run() -> None:
         "emoji_replacement": None,
         "apply_unicode_norm_last": True,
     }
-    assert config["output"]["root"].endswith("multibanfakedetect_banglabert")
-    assert config["project"]["config_name"] == "benchmark_multibanfakedetect_banglabert"
+    assert config["output"]["root"].endswith("multibanfakedetect_compact_v1")
+    assert config["project"]["config_name"] == "benchmark_multibanfakedetect_compact_v1"
     assert config["checkpointing"]["minimum_stage"] == "B"
+    assert config["training"]["epochs"] == 8
+    assert config["training"]["micro_batch_size"] == 16
+    assert config["training"]["gradient_accumulation_steps"] == 1
+    assert config["dataloader"]["batch_size"] == 16
+    assert config["training"]["early_stopping"]["patience"] == 2
+    assert config["training"]["early_stopping"]["minimum_backbone_adaptation_epochs"] == 1
+
+
+@pytest.mark.parametrize(
+    ("key", "large_name"),
+    (
+        ("siglip2", "google/siglip2-so400m-patch14-384"),
+        ("dinov3", "facebook/dinov3-vitl16-pretrain-lvd1689m"),
+        ("deberta", "csebuetnlp/banglabert"),
+    ),
+)
+def test_multiban_rejects_noncompact_backbone(key: str, large_name: str) -> None:
+    config = copy.deepcopy(load_yaml_config(CONFIGS[0]))
+    config["backbones"][key]["name"] = large_name
+    if key == "deberta":
+        config["tokenizer"]["name"] = large_name
+
+    with pytest.raises(ConfigError, match="requires the compact backbone"):
+        validate_binary_benchmark_config(config, mode="prepare")
 
 
 def test_multiban_rejects_missing_banglabert_normalization() -> None:

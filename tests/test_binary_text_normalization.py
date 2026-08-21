@@ -150,7 +150,7 @@ def test_multiban_adapter_and_preflight_use_the_same_normalized_text(
 
     assert item["text"] == "বাংলা শিরোনাম সংবাদ বিবরণ [normalized]"
     assert item["metadata"]["text_normalizer"] == BANGLA_NORMALIZER_PROVIDER
-    assert report_path.name == "benchmark_multibanfakedetect_banglabert_audit.json"
+    assert report_path.name == "benchmark_multibanfakedetect_compact_v1_audit.json"
     assert report["rows"] == 3
     assert report["text_normalization"]["changed_rows"] == 3
     assert report["text_normalization"]["empty_rows"] == 0
