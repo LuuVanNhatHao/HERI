@@ -16,6 +16,7 @@ from PIL import Image
 
 from .data.multiban import IMAGE_EXTENSIONS
 from .splits import build_vldbench_split_manifest
+from .text_normalization import BenchmarkTextNormalizer
 
 
 def prepare_binary_benchmark(
@@ -38,7 +39,10 @@ def prepare_binary_benchmark(
         str(config["dataset"].get("artifacts_dir", "outputs/benchmark_preflight"))
     )
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{adapter}_audit.json"
+    config_name = str(config["project"]["config_name"]).strip()
+    if not config_name:
+        raise ValueError("project.config_name must be non-empty for benchmark artifacts")
+    path = output_dir / f"{config_name}_audit.json"
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -98,11 +102,23 @@ def audit_multibanfakedetect(config: Mapping[str, Any]) -> dict[str, Any]:
     combined = pd.concat(frames, ignore_index=True)
     hashes = pd.DataFrame(file_hash_rows)
     combined = combined.merge(hashes, on=["split", "image_id"], validate="one_to_one")
-    combined["text_key"] = (
-        combined["headline"].map(_normalize_text)
-        + "\u241f"
-        + combined["description"].map(_normalize_text)
+    text_config = dataset["text"]
+    separator = str(text_config["separator"])
+    text_fields = tuple(str(value) for value in text_config["fields"])
+    text_normalizer = BenchmarkTextNormalizer.from_config(
+        text_config.get("normalization")
     )
+    raw_text = combined.loc[:, list(text_fields)].astype(str).apply(
+        lambda row: separator.join(value.strip() for value in row), axis=1
+    )
+    normalized_text = raw_text.map(text_normalizer).str.strip()
+    empty_normalized = combined.loc[normalized_text.eq(""), "image_id"].astype(str)
+    if len(empty_normalized):
+        raise ValueError(
+            "MultiBanFakeDetect normalization produced empty text during preflight; "
+            f"examples={empty_normalized.head(5).tolist()}"
+        )
+    combined["text_key"] = normalized_text.map(_normalize_text)
     combined["full_key"] = combined["text_key"] + "\u241f" + combined["image_sha256"]
     full_groups = combined.groupby("full_key", sort=False)
     conflicting_full = [
@@ -149,6 +165,11 @@ def audit_multibanfakedetect(config: Mapping[str, Any]) -> dict[str, Any]:
             sum(len(group) > 1 for _, group in full_groups)
         ),
         "conflicting_exact_multimodal_groups": conflicting_full,
+        "text_normalization": {
+            **text_normalizer.signature(),
+            "changed_rows": int((raw_text != normalized_text).sum()),
+            "empty_rows": 0,
+        },
         "normalizations": {
             "category": {"busniness": "business", "national ": "national"},
             "subtype": {"Clickbait": "clickbait"},

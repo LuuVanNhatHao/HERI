@@ -13,6 +13,7 @@ import torch
 from src.training.checkpoint import rng_state
 
 from .contracts import SignalContract
+from .text_normalization import text_normalization_signature
 
 
 def create_benchmark_run_dir(
@@ -97,6 +98,7 @@ def benchmark_signature(config: Mapping[str, Any]) -> dict[str, Any]:
     manifest_path = Path(str(manifest)) if manifest not in (None, "") else None
     return {
         "architecture_version": config["project"]["architecture_version"],
+        "config_name": config["project"]["config_name"],
         "task_type": config["task"]["type"],
         "signals": SignalContract.from_config(config).as_dict(),
         "dataset_adapter": dataset["adapter"],
@@ -105,6 +107,7 @@ def benchmark_signature(config: Mapping[str, Any]) -> dict[str, Any]:
         "cross_split_duplicate_policy": dataset["cross_split_duplicate_policy"],
         "primary_target": config["task"]["primary_target"],
         "text_fields": list(dataset["text"]["fields"]),
+        "text_normalization": text_normalization_signature(config),
         "tokenizer_name": config["tokenizer"]["name"],
         "tokenizer_max_length": int(config["tokenizer"]["max_length"]),
         "image_size": int(config["image"]["size"]),
@@ -130,6 +133,10 @@ def benchmark_signature(config: Mapping[str, Any]) -> dict[str, Any]:
             "precision": config["runtime"]["precision"],
             "model_dtype": config["runtime"]["model_dtype"],
             "gradient_checkpointing": dict(config["runtime"]["gradient_checkpointing"]),
+            "checkpoint_selection": {
+                "metric": config["checkpointing"]["selection_metric"],
+                "minimum_stage": config["checkpointing"]["minimum_stage"],
+            },
         },
         "manifest_sha256": (
             sha256_file(manifest_path)

@@ -12,6 +12,13 @@ def stage_name(config: Mapping[str, Any], epoch: int) -> str:
     return "A" if epoch <= freeze else "B"
 
 
+def checkpoint_stage_is_eligible(config: Mapping[str, Any], epoch: int) -> bool:
+    """Return whether an epoch may become the benchmark evaluation checkpoint."""
+
+    minimum_stage = str(config["checkpointing"]["minimum_stage"])
+    return stage_name(config, epoch) == minimum_stage
+
+
 def cuda_memory_postfix(device: torch.device) -> str | None:
     if device.type != "cuda" or not torch.cuda.is_available():
         return None

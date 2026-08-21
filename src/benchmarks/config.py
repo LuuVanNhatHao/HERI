@@ -25,6 +25,7 @@ def validate_binary_benchmark_config(
         "project.name",
         "project.seed",
         "project.architecture_version",
+        "project.config_name",
         "task.type",
         "task.primary_target",
         "task.negative_name",
@@ -97,6 +98,7 @@ def validate_binary_benchmark_config(
         "thresholding.binary.max",
         "thresholding.binary.step",
         "checkpointing.selection_metric",
+        "checkpointing.minimum_stage",
         "checkpointing.keep_last",
         "checkpointing.keep_best",
         "checkpointing.best_weights_only",
@@ -132,6 +134,8 @@ def validate_binary_benchmark_config(
         raise ConfigError(f"task.type must be {PRIMARY_TASK!r}")
     if str(require_key(config, "project.architecture_version")) != "hera_binary_final_v2":
         raise ConfigError("Binary benchmark architecture_version must be hera_binary_final_v2")
+    if not str(require_key(config, "project.config_name")).strip():
+        raise ConfigError("project.config_name must be non-empty")
     adapter = str(require_key(config, "dataset.adapter")).strip().casefold()
     if adapter not in SUPPORTED_DATASETS:
         raise ConfigError(
@@ -272,6 +276,10 @@ def validate_binary_benchmark_config(
         raise ConfigError(
             "Binary benchmark best checkpoint must be selected by macro_f1"
         )
+    if str(require_key(config, "checkpointing.minimum_stage")) != "B":
+        raise ConfigError(
+            "Binary benchmark best checkpoints must be selected from full-fine-tuning Stage B"
+        )
     if not bool(require_key(config, "checkpointing.keep_last")) or not bool(
         require_key(config, "checkpointing.keep_best")
     ):
@@ -335,6 +343,40 @@ def _validate_dataset_specific(
                 "The official MultiBanFakeDetect protocol preserves released duplicates; "
                 "cross_split_duplicate_policy must be report_only"
             )
+        if str(require_key(config, "tokenizer.name")) != "csebuetnlp/banglabert":
+            raise ConfigError(
+                "Canonical MultiBanFakeDetect requires the compact language-specific "
+                "csebuetnlp/banglabert text backbone"
+            )
+        normalization_prefix = "dataset.text.normalization"
+        if not bool(require_key(config, f"{normalization_prefix}.enabled")):
+            raise ConfigError(
+                "MultiBanFakeDetect BanglaBERT preprocessing requires text normalization"
+            )
+        if (
+            str(require_key(config, f"{normalization_prefix}.provider"))
+            != "csebuetnlp/normalizer"
+        ):
+            raise ConfigError(
+                "MultiBanFakeDetect must use the official csebuetnlp/normalizer provider"
+            )
+        if str(require_key(config, f"{normalization_prefix}.unicode_norm")) != "NFKC":
+            raise ConfigError("BanglaBERT text normalization must use NFKC")
+        if not bool(
+            require_key(config, f"{normalization_prefix}.apply_unicode_norm_last")
+        ):
+            raise ConfigError(
+                "BanglaBERT requires apply_unicode_norm_last=true for the validated pipeline"
+            )
+        for replacement in (
+            "punct_replacement",
+            "url_replacement",
+            "emoji_replacement",
+        ):
+            if require_key(config, f"{normalization_prefix}.{replacement}") is not None:
+                raise ConfigError(
+                    f"Canonical BanglaBERT preprocessing requires {replacement}=null"
+                )
         for key in (
             "train_csv",
             "val_csv",

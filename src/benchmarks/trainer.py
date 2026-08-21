@@ -46,6 +46,7 @@ from .reporting import persist_epoch, write_training_complete
 from .resume import restore_resume_runtime
 from .state import BenchmarkTrainingState
 from .training_utils import (
+    checkpoint_stage_is_eligible,
     cuda_memory_postfix,
     full_ft_gradient_coverage,
     stage_name,
@@ -507,9 +508,15 @@ class BinaryBenchmarkTrainer:
     ) -> None:
         selection = str(self.config["checkpointing"]["selection_metric"])
         score = float(metrics[selection])
-        improved = self.state.best_metric is None or score > self.state.best_metric
+        minimum_stage = str(self.config["checkpointing"]["minimum_stage"])
+        current_stage = stage_name(self.config, self.state.epoch)
+        eligible = checkpoint_stage_is_eligible(self.config, self.state.epoch)
+        improved = eligible and (
+            self.state.best_metric is None or score > self.state.best_metric
+        )
         if improved and bool(self.config["checkpointing"].get("keep_best", True)):
             self.state.best_metric = score
+            self.state.best_threshold = self.state.threshold
             self.state.best_model_path = self.run_dir / "checkpoints" / "best_model.pt"
             save_best_model(
                 path=self.state.best_model_path,
@@ -534,6 +541,11 @@ class BinaryBenchmarkTrainer:
             )
             tqdm.write(
                 f"Saved best model-only checkpoint: {self.state.best_model_path}"
+            )
+        elif not eligible:
+            tqdm.write(
+                "Best-checkpoint selection deferred: "
+                f"stage={current_stage}, minimum_stage={minimum_stage}"
             )
         if bool(self.config["checkpointing"].get("keep_last", True)):
             last = self.run_dir / "checkpoints" / "last.pt"

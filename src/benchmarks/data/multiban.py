@@ -9,6 +9,7 @@ import pandas as pd
 from PIL import Image
 
 from src.benchmarks.contracts import SUBTYPE_CLASSES, normalize_multiban_subtype
+from src.benchmarks.text_normalization import BenchmarkTextNormalizer
 
 from .base import BinaryBenchmarkDataset, BinaryBenchmarkRecord
 
@@ -57,10 +58,29 @@ class MultiBanFakeDetectDataset(BinaryBenchmarkDataset):
             )
         self.text_fields = tuple(str(value) for value in dataset["text"]["fields"])
         self.separator = str(dataset["text"]["separator"])
+        self.text_normalizer = BenchmarkTextNormalizer.from_config(
+            dataset["text"].get("normalization")
+        )
         unknown_text_fields = sorted(set(self.text_fields) - set(self.frame.columns))
         if unknown_text_fields:
             raise ValueError(
                 f"Unknown MultiBanFakeDetect text fields: {unknown_text_fields}"
+            )
+        self.normalized_texts = [
+            self.text_normalizer(
+                self.separator.join(str(row[field]).strip() for field in self.text_fields)
+            ).strip()
+            for _, row in self.frame.iterrows()
+        ]
+        empty_normalized = [
+            str(self.frame.iloc[index]["image_id"])
+            for index, text in enumerate(self.normalized_texts)
+            if not text
+        ]
+        if empty_normalized:
+            raise ValueError(
+                "MultiBanFakeDetect normalization produced empty text; "
+                f"examples={empty_normalized[:5]}"
             )
         self.image_paths = _index_images(image_root)
         missing_images = sorted(
@@ -90,9 +110,7 @@ class MultiBanFakeDetectDataset(BinaryBenchmarkDataset):
                 f"MultiBanFakeDetect subtype/binary conflict: id={sample_id} "
                 f"subtype={subtype!r} label={binary}"
             )
-        text = self.separator.join(
-            str(row[field]).strip() for field in self.text_fields
-        )
+        text = self.normalized_texts[int(index)]
         path = self.image_paths[sample_id]
         return BinaryBenchmarkRecord(
             sample_id=sample_id,
@@ -105,6 +123,7 @@ class MultiBanFakeDetectDataset(BinaryBenchmarkDataset):
             metadata={
                 "category": _normalize_category(row["category"]),
                 "subtype": subtype,
+                "text_normalizer": self.text_normalizer.provider,
                 "source_row": int(index),
             },
         )

@@ -23,3 +23,6 @@ tqdm>=4.66,<5.0
 Pillow>=10.0,<13.0
 packaging>=23.0,<26.0
 pytest>=8.0,<10.0
+
+# BanglaBERT's official normalization pipeline, pinned for reproducibility.
+normalizer @ git+https://github.com/csebuetnlp/normalizer.git@d405944dde5ceeacb7c2fd3245ae2a9dea5f35c9

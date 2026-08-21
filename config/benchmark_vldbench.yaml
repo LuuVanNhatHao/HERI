@@ -175,6 +175,7 @@ thresholding:
   binary: {objective: macro_f1, min: 0.05, max: 0.95, step: 0.01}
 checkpointing:
   selection_metric: macro_f1
+  minimum_stage: B
   keep_last: true
   keep_best: true
   best_weights_only: true

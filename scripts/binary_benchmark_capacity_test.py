@@ -42,8 +42,11 @@ def main() -> int:
     validate_binary_benchmark_config(config, mode="train")
     setup_logging(str(config["logging"]["level"]))
     set_seed(int(config["project"]["seed"]))
+    config_name = str(config["project"]["config_name"]).strip()
+    if not config_name:
+        raise ValueError("project.config_name must be non-empty for capacity artifacts")
     report_path = args.report or Path("outputs/benchmark_capacity") / (
-        f"{config['dataset']['adapter']}_bs{args.batch_size}_ga"
+        f"{config_name}_bs{args.batch_size}_ga"
         f"{args.gradient_accumulation_steps}.json"
     )
     try:

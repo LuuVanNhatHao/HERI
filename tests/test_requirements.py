@@ -59,6 +59,14 @@ def test_huggingface_hub_major_version_matches_transformers_four() -> None:
     assert "<1.0" in requirement
 
 
+def test_banglabert_normalizer_is_pinned_to_reviewed_commit() -> None:
+    contents = Path("requirements.txt").read_text(encoding="utf-8")
+    assert (
+        "normalizer @ git+https://github.com/csebuetnlp/normalizer.git@"
+        "d405944dde5ceeacb7c2fd3245ae2a9dea5f35c9"
+    ) in contents
+
+
 def test_transformers_major_five_fails_with_explicit_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transformers_compat, "_transformers_version", lambda: "5.15.0")
     with pytest.raises(TransformersCompatibilityError, match="unsupported transformers version"):

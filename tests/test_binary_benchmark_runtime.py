@@ -6,7 +6,10 @@ import torch
 
 from src.benchmarks.artifacts import load_checkpoint_payload, save_last_checkpoint
 from src.benchmarks.state import BenchmarkTrainingState
-from src.benchmarks.training_utils import full_ft_gradient_coverage
+from src.benchmarks.training_utils import (
+    checkpoint_stage_is_eligible,
+    full_ft_gradient_coverage,
+)
 from src.training.precision import PrecisionManager
 from src.utils.config import load_yaml_config
 
@@ -25,6 +28,7 @@ def test_atomic_last_checkpoint_contains_complete_resume_state(tmp_path: Path) -
         global_step=17,
         threshold=0.37,
         best_metric=0.81,
+        best_threshold=0.37,
         best_model_path=tmp_path / "best_model.pt",
         early_stopping_best=0.81,
         early_stopping_bad_epochs=1,
@@ -49,6 +53,7 @@ def test_atomic_last_checkpoint_contains_complete_resume_state(tmp_path: Path) -
     assert payload["epoch"] == 4
     assert payload["global_step"] == 17
     assert payload["binary_threshold"] == 0.37
+    assert payload["best_binary_threshold"] == 0.37
     assert payload["optimizer"]["state"]
     assert payload["rng_state"]["torch"] is not None
     assert not path.with_suffix(".pt.tmp").exists()
@@ -80,3 +85,11 @@ def test_full_ft_gradient_audit_proves_all_backbones_receive_gradients() -> None
 
     assert set(report) == {"siglip2", "dinov3", "deberta"}
     assert all(values["gradient_element_coverage"] == 1.0 for values in report.values())
+
+
+def test_best_checkpoint_selection_excludes_frozen_warmup_epochs() -> None:
+    config = load_yaml_config("config/benchmark_multibanfakedetect.yaml")
+
+    assert checkpoint_stage_is_eligible(config, 1) is False
+    assert checkpoint_stage_is_eligible(config, 3) is False
+    assert checkpoint_stage_is_eligible(config, 4) is True

@@ -62,3 +62,31 @@ def test_capacity_config_is_full_ft_and_never_writes_training_checkpoints() -> N
     assert capacity["training"]["auto_resume"]["enabled"] is False
     assert capacity["training"]["gradient_accumulation_steps"] == 2
     assert capacity["dataloader"]["batch_size"] == 2
+
+
+def test_multiban_uses_compact_banglabert_and_isolates_the_new_run() -> None:
+    config = load_yaml_config(CONFIGS[0])
+    validate_binary_benchmark_config(config, mode="prepare")
+
+    assert config["tokenizer"]["name"] == "csebuetnlp/banglabert"
+    assert config["backbones"]["deberta"]["name"] == "csebuetnlp/banglabert"
+    assert config["dataset"]["text"]["normalization"] == {
+        "enabled": True,
+        "provider": "csebuetnlp/normalizer",
+        "unicode_norm": "NFKC",
+        "punct_replacement": None,
+        "url_replacement": None,
+        "emoji_replacement": None,
+        "apply_unicode_norm_last": True,
+    }
+    assert config["output"]["root"].endswith("multibanfakedetect_banglabert")
+    assert config["project"]["config_name"] == "benchmark_multibanfakedetect_banglabert"
+    assert config["checkpointing"]["minimum_stage"] == "B"
+
+
+def test_multiban_rejects_missing_banglabert_normalization() -> None:
+    config = copy.deepcopy(load_yaml_config(CONFIGS[0]))
+    config["dataset"]["text"]["normalization"]["enabled"] = False
+
+    with pytest.raises(ConfigError, match="requires text normalization"):
+        validate_binary_benchmark_config(config, mode="prepare")

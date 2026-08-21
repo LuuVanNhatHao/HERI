@@ -145,6 +145,10 @@ latent evidence slots. It does not instantiate or supervise DGM4 attribution
 and grounding heads. Dataset-native auxiliary signals (`subtype` for
 MultiBanFakeDetect and `text_label` for VLDBench) are independently gated by
 `task.signals` and matching loss weights; both are off in the canonical YAMLs.
+The canonical MultiBanFakeDetect configuration uses the compact 110M
+`csebuetnlp/banglabert` contextual encoder and its pinned official Bengali
+normalization pipeline. The normalizer is applied once when each dataset split
+is materialized, before both contextual tokenization and multimodal reasoning.
 
 Prepare and audit the real releases before training:
 
@@ -164,14 +168,14 @@ checkpoint, then train/evaluate:
 ```bash
 python scripts/binary_benchmark_capacity_test.py \
   config/benchmark_multibanfakedetect.yaml \
-  --batch-size 4 --batches 2 --gradient-accumulation-steps 1
+  --batch-size 4 --batches 4 --gradient-accumulation-steps 4
 
 python scripts/train_binary_benchmark.py config/benchmark_multibanfakedetect.yaml
 python scripts/evaluate_binary_benchmark.py config/benchmark_multibanfakedetect.yaml
 
 python scripts/binary_benchmark_capacity_test.py \
   config/benchmark_vldbench.yaml \
-  --batch-size 2 --batches 2 --gradient-accumulation-steps 1
+  --batch-size 2 --batches 8 --gradient-accumulation-steps 8
 
 python scripts/train_binary_benchmark.py config/benchmark_vldbench.yaml
 python scripts/evaluate_binary_benchmark.py config/benchmark_vldbench.yaml
@@ -181,4 +185,5 @@ Each YAML owns an output root and auto-resumes from its newest `last.pt`.
 Stage A freezes every backbone for three epochs; Stage B fully unfreezes all
 three backbones. The first Stage-B backward pass writes a gradient-coverage
 audit proving that the full backbones, rather than only their last blocks,
-receive gradients.
+receive gradients. Evaluation checkpoints are selected only from Stage B, so
+a frozen-warmup epoch can never be reported as the final benchmark model.

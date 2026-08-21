@@ -13,6 +13,7 @@ class BenchmarkTrainingState:
     global_step: int = 0
     threshold: float = 0.5
     best_metric: float | None = None
+    best_threshold: float | None = None
     best_model_path: Path | None = None
     early_stopping_best: float | None = None
     early_stopping_bad_epochs: int = 0
@@ -26,6 +27,11 @@ class BenchmarkTrainingState:
             best_metric=(
                 float(payload["best_metric"])
                 if payload.get("best_metric") is not None
+                else None
+            ),
+            best_threshold=(
+                float(payload["best_binary_threshold"])
+                if payload.get("best_binary_threshold") is not None
                 else None
             ),
             best_model_path=(
@@ -47,6 +53,7 @@ class BenchmarkTrainingState:
             "global_step": int(self.global_step),
             "binary_threshold": float(self.threshold),
             "best_metric": self.best_metric,
+            "best_binary_threshold": self.best_threshold,
             "best_model_path": str(self.best_model_path)
             if self.best_model_path
             else None,
