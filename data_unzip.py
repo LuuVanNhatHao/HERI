@@ -2,7 +2,7 @@ import gdown
 import zipfile
 
 # File ID từ Google Drive
-file_id = "1Csv0S84tK64CuG6B7lHuEI9Ker-Z5Twl"
+file_id = "19X5UE1s8OxbdvQsG80WgQkNqVY2Y3jFC"
 output = "data.zip"
 
 print("⬇️ Downloading full data.zip...")
