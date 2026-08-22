@@ -136,6 +136,43 @@ Rerunning the same command resumes an interrupted variant from its latest
 evaluation whose `summary.csv` already exists. Checkpoints are written after
 each epoch, so an interruption in the middle of an epoch repeats that epoch.
 
+## Canonical HERA multi-seed runs
+
+The final reproducibility suite runs canonical HERA only (no B0/B1 and no
+ablation variants) under three configured seeds. It inherits the complete
+architecture, staged full-fine-tuning, optimization, batch-size,
+early-stopping, and threshold protocol from `config/train_hera.yaml` and
+`config/evaluate_hera.yaml`.
+
+Validate all generated production configs without loading a model or GPU:
+
+```bash
+python scripts/run_hera_multiseed.py \
+  config/experiments/hera_multiseed.yaml \
+  --dry-run
+```
+
+Run all three seeds sequentially, including each seed's test evaluation:
+
+```bash
+python scripts/run_hera_multiseed.py config/experiments/hera_multiseed.yaml
+```
+
+Resume or target a subset without changing seed identity:
+
+```bash
+python scripts/run_hera_multiseed.py \
+  config/experiments/hera_multiseed.yaml \
+  --seeds 123 3407
+```
+
+Each seed has an isolated auto-resume root under `outputs/hera_multiseed/`.
+Rerunning the command resumes from that seed's `last.pt`; a seed with an
+existing test `summary.csv` is skipped even if its checkpoints were later
+deleted. Final per-seed results and paper-ready mean/sample-standard-deviation
+tables are written to `outputs/hera_multiseed/seed_results.csv` and
+`outputs/hera_multiseed/multiseed_statistics.csv`.
+
 ## Binary multimodal benchmarks
 
 MultiBanFakeDetect and VLDBench use a separate task-aware delivery. It reuses
