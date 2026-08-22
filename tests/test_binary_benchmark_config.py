@@ -127,6 +127,7 @@ def test_vldbench_uses_modernbert_and_isolates_long_context_run() -> None:
     assert config["tokenizer"]["name"] == "answerdotai/ModernBERT-large"
     assert config["tokenizer"]["max_length"] == 2048
     assert config["backbones"]["deberta"]["name"] == "answerdotai/ModernBERT-large"
+    assert config["runtime"]["reference_compile"] is False
     assert config["dataset"]["text"]["long_context"] == {
         "enabled": True,
         "strategy": "headline_lead_tail_token_budget_v1",
@@ -146,4 +147,12 @@ def test_vldbench_rejects_legacy_short_context_backbone() -> None:
     config["tokenizer"]["name"] = "microsoft/deberta-v3-large"
 
     with pytest.raises(ConfigError, match="ModernBERT-large"):
+        validate_binary_benchmark_config(config, mode="prepare")
+
+
+def test_vldbench_rejects_reference_compile_for_staged_training() -> None:
+    config = copy.deepcopy(load_yaml_config(CONFIGS[1]))
+    config["runtime"]["reference_compile"] = True
+
+    with pytest.raises(ConfigError, match="reference_compile=false"):
         validate_binary_benchmark_config(config, mode="prepare")

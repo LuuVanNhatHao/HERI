@@ -43,6 +43,10 @@ class ContextTextEncoder(nn.Module):
             torch_dtype=runtime.get("model_dtype"),
             attn_implementation=runtime.get("attn_implementation"),
         )
+        configure_reference_compile(
+            model,
+            requested=runtime.get("reference_compile"),
+        )
         tokenizer = load_fast_tokenizer(
             name=name,
             use_fast=True,
@@ -99,3 +103,31 @@ def _extract_last_hidden_state(outputs: Any) -> torch.Tensor:
 
 # Backward-compatible import for DGM4 and existing checkpoints/configuration code.
 DeBERTaEncoder = ContextTextEncoder
+
+
+def configure_reference_compile(
+    model: nn.Module,
+    *,
+    requested: Any,
+) -> bool | None:
+    """Set optional encoder-internal reference compilation before first forward.
+
+    ModernBERT may automatically compile its embedding and MLP helpers when
+    Triton is available. A graph first compiled while Stage A is frozen can
+    retain that frozen parameter contract after Stage B unfreezes the model,
+    leaving the token embedding without gradients. Explicitly disabling that
+    optional compile path keeps staged full fine-tuning correct; gradient
+    checkpointing and the configured attention implementation remain active.
+    """
+
+    if requested is None:
+        return None
+    model_config = getattr(model, "config", None)
+    if model_config is None or not hasattr(model_config, "reference_compile"):
+        raise RuntimeError(
+            "runtime.reference_compile was configured, but the contextual "
+            "text backbone does not expose config.reference_compile"
+        )
+    enabled = bool(requested)
+    model_config.reference_compile = enabled
+    return enabled

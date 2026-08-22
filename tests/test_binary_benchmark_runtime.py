@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 
-from src.benchmarks.artifacts import load_checkpoint_payload, save_last_checkpoint
+from src.benchmarks.artifacts import (
+    benchmark_signature,
+    load_checkpoint_payload,
+    save_last_checkpoint,
+)
 from src.benchmarks.capacity import expand_capacity_text_batch
 from src.benchmarks.state import BenchmarkTrainingState
 from src.benchmarks.training_utils import (
@@ -86,6 +91,29 @@ def test_full_ft_gradient_audit_proves_all_backbones_receive_gradients() -> None
 
     assert set(report) == {"siglip2", "dinov3", "deberta"}
     assert all(values["gradient_element_coverage"] == 1.0 for values in report.values())
+
+
+def test_full_ft_gradient_audit_names_largest_missing_tensor() -> None:
+    model = _ThreeBackbones()
+    model.modules_by_name["deberta"].weight.requires_grad_(True)
+    model.modules_by_name["deberta"].bias.requires_grad_(True)
+    loss = sum(
+        module(torch.ones(2, 2)).sum()
+        for name, module in model.modules_by_name.items()
+        if name != "deberta"
+    )
+    loss.backward()
+
+    with pytest.raises(RuntimeError, match=r"deberta.*weight"):
+        full_ft_gradient_coverage(model, minimum_element_coverage=0.95)
+
+
+def test_reference_compile_runtime_fix_preserves_resume_signature() -> None:
+    config = load_yaml_config("config/benchmark_vldbench.yaml")
+    previous = load_yaml_config("config/benchmark_vldbench.yaml")
+    previous["runtime"].pop("reference_compile")
+
+    assert benchmark_signature(config) == benchmark_signature(previous)
 
 
 def test_best_checkpoint_selection_excludes_frozen_warmup_epochs() -> None:

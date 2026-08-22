@@ -431,6 +431,11 @@ def _validate_dataset_specific(
             raise ConfigError(
                 f"Canonical long-context VLDBench tokenizer must be {model_name}"
             )
+        if require_key(config, "runtime.reference_compile") is not False:
+            raise ConfigError(
+                "Canonical staged ModernBERT training requires "
+                "runtime.reference_compile=false"
+            )
         if int(require_key(config, "tokenizer.max_length")) != 2048:
             raise ConfigError(
                 "Canonical long-context VLDBench must start with tokenizer.max_length=2048"

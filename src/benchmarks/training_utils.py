@@ -45,7 +45,8 @@ def full_ft_gradient_coverage(
             f"Full-FT gradient audit is missing backbones: {sorted(missing)}"
         )
     for name, module in backbones.items():
-        parameters = list(module.parameters())
+        named_parameters = list(module.named_parameters())
+        parameters = [parameter for _, parameter in named_parameters]
         total_elements = sum(parameter.numel() for parameter in parameters)
         trainable = [parameter for parameter in parameters if parameter.requires_grad]
         trainable_elements = sum(parameter.numel() for parameter in trainable)
@@ -59,9 +60,19 @@ def full_ft_gradient_coverage(
             )
         ratio = gradient_elements / total_elements
         if ratio < minimum_element_coverage:
+            largest_missing = sorted(
+                (
+                    (parameter_name, parameter.numel())
+                    for parameter_name, parameter in named_parameters
+                    if parameter.requires_grad and parameter.grad is None
+                ),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:8]
             raise RuntimeError(
                 f"Backbone {name} gradient coverage is too low: "
-                f"{ratio:.6f} < {minimum_element_coverage:.6f}"
+                f"{ratio:.6f} < {minimum_element_coverage:.6f}; "
+                f"largest tensors without gradients={largest_missing}"
             )
         report[name] = {
             "total_tensors": len(parameters),
