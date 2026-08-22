@@ -6,7 +6,7 @@ suite:
   training_epochs: 20
   fail_fast: true
   seeds:
-    - 42
+    - 7
     - 123
     - 3407
   aggregate_metrics:

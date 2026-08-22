@@ -163,7 +163,7 @@ Resume or target a subset without changing seed identity:
 ```bash
 python scripts/run_hera_multiseed.py \
   config/experiments/hera_multiseed.yaml \
-  --seeds 123 3407
+  --seeds 7 123 3407
 ```
 
 Each seed has an isolated auto-resume root under `outputs/hera_multiseed/`.

@@ -29,7 +29,7 @@ SUITE_PATH = ROOT / "config" / "experiments" / "hera_multiseed.yaml"
 
 def test_manifest_defines_three_unique_canonical_seeds() -> None:
     suite = load_multiseed_suite(SUITE_PATH)
-    assert suite["seeds"] == [42, 123, 3407]
+    assert suite["seeds"] == [7, 123, 3407]
     assert len(set(suite["seeds"])) == 3
 
 
@@ -38,7 +38,7 @@ def test_materialized_jobs_are_isolated_and_protocol_matched(tmp_path: Path) -> 
     suite["output_root"] = str(tmp_path / "multiseed")
     jobs = materialize_multiseed_jobs(suite, repo_root=ROOT)
 
-    assert [job.seed for job in jobs] == [42, 123, 3407]
+    assert [job.seed for job in jobs] == [7, 123, 3407]
     assert len({job.train_output_root for job in jobs}) == 3
     for job in jobs:
         train = load_yaml_config(job.train_config_path)
@@ -83,7 +83,7 @@ def test_seed_subset_preserves_manifest_order_and_rejects_unknown(
     suite = load_multiseed_suite(SUITE_PATH)
     suite["output_root"] = str(tmp_path / "multiseed")
     jobs = materialize_multiseed_jobs(suite, repo_root=ROOT)
-    assert [job.seed for job in select_multiseed_jobs(jobs, [3407, 42])] == [42, 3407]
+    assert [job.seed for job in select_multiseed_jobs(jobs, [3407, 7])] == [7, 3407]
     with pytest.raises(ConfigError, match="not enabled"):
         select_multiseed_jobs(jobs, [999])
 
@@ -96,7 +96,7 @@ def test_existing_summary_skips_retraining_after_checkpoint_cleanup(
     suite["output_root"] = str(tmp_path / "multiseed")
     job = materialize_multiseed_jobs(suite, repo_root=ROOT)[0]
     job.expected_summary_path.parent.mkdir(parents=True, exist_ok=True)
-    job.expected_summary_path.write_text("seed,acc\n42,0.91\n", encoding="utf-8")
+    job.expected_summary_path.write_text("seed,acc\n7,0.91\n", encoding="utf-8")
 
     def fail_if_launched(*args, **kwargs):
         raise AssertionError("A completed seed must not launch a subprocess")
@@ -115,7 +115,7 @@ def test_train_completion_requires_matching_seed_and_best_checkpoint(
     suite = load_multiseed_suite(SUITE_PATH)
     suite["output_root"] = str(tmp_path / "multiseed")
     job = materialize_multiseed_jobs(suite, repo_root=ROOT)[0]
-    run_dir = job.train_output_root / "hera_seed42_fixture"
+    run_dir = job.train_output_root / "hera_seed7_fixture"
     (run_dir / "checkpoints").mkdir(parents=True)
     (run_dir / "checkpoints" / "best.pt").write_bytes(b"fixture")
     (run_dir / "training_complete.json").write_text(
@@ -147,7 +147,7 @@ def test_aggregation_validates_seed_and_computes_sample_std(tmp_path: Path) -> N
     suite = load_multiseed_suite(SUITE_PATH)
     suite["output_root"] = str(tmp_path / "multiseed")
     jobs = materialize_multiseed_jobs(suite, repo_root=ROOT)
-    values = {42: 0.90, 123: 0.91, 3407: 0.92}
+    values = {7: 0.90, 123: 0.91, 3407: 0.92}
     for job in jobs:
         job.expected_summary_path.parent.mkdir(parents=True, exist_ok=True)
         job.expected_summary_path.write_text(
