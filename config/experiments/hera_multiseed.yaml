@@ -7,8 +7,8 @@ suite:
   fail_fast: true
   seeds:
     - 7
-    - 123
-    - 3407
+    - 21
+    - 101
   aggregate_metrics:
     - acc
     - auc

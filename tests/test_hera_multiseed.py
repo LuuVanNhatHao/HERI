@@ -29,7 +29,7 @@ SUITE_PATH = ROOT / "config" / "experiments" / "hera_multiseed.yaml"
 
 def test_manifest_defines_three_unique_canonical_seeds() -> None:
     suite = load_multiseed_suite(SUITE_PATH)
-    assert suite["seeds"] == [7, 123, 3407]
+    assert suite["seeds"] == [7, 21, 101]
     assert len(set(suite["seeds"])) == 3
 
 
@@ -38,7 +38,7 @@ def test_materialized_jobs_are_isolated_and_protocol_matched(tmp_path: Path) -> 
     suite["output_root"] = str(tmp_path / "multiseed")
     jobs = materialize_multiseed_jobs(suite, repo_root=ROOT)
 
-    assert [job.seed for job in jobs] == [7, 123, 3407]
+    assert [job.seed for job in jobs] == [7, 21, 101]
     assert len({job.train_output_root for job in jobs}) == 3
     for job in jobs:
         train = load_yaml_config(job.train_config_path)
@@ -83,7 +83,7 @@ def test_seed_subset_preserves_manifest_order_and_rejects_unknown(
     suite = load_multiseed_suite(SUITE_PATH)
     suite["output_root"] = str(tmp_path / "multiseed")
     jobs = materialize_multiseed_jobs(suite, repo_root=ROOT)
-    assert [job.seed for job in select_multiseed_jobs(jobs, [3407, 7])] == [7, 3407]
+    assert [job.seed for job in select_multiseed_jobs(jobs, [101, 7])] == [7, 101]
     with pytest.raises(ConfigError, match="not enabled"):
         select_multiseed_jobs(jobs, [999])
 
@@ -133,7 +133,7 @@ def test_train_completion_requires_matching_seed_and_best_checkpoint(
     )
     run_multiseed_jobs([job], repo_root=ROOT, phase="train")
 
-    effective["project"]["seed"] = 123
+    effective["project"]["seed"] = 21
     dump_yaml(effective, run_dir / "effective_config.yaml")
     monkeypatch.setattr(
         "src.experiments.multiseed_runner.subprocess.run",
@@ -147,7 +147,7 @@ def test_aggregation_validates_seed_and_computes_sample_std(tmp_path: Path) -> N
     suite = load_multiseed_suite(SUITE_PATH)
     suite["output_root"] = str(tmp_path / "multiseed")
     jobs = materialize_multiseed_jobs(suite, repo_root=ROOT)
-    values = {7: 0.90, 123: 0.91, 3407: 0.92}
+    values = {7: 0.90, 21: 0.91, 101: 0.92}
     for job in jobs:
         job.expected_summary_path.parent.mkdir(parents=True, exist_ok=True)
         job.expected_summary_path.write_text(
