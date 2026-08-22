@@ -154,6 +154,14 @@ normalizer is applied once when each dataset split is materialized, before both
 contextual tokenization and multimodal reasoning. Its isolated
 `multibanfakedetect_compact_v1` output root cannot auto-resume an older
 large-backbone run.
+VLDBench uses `answerdotai/ModernBERT-large` as its contextual encoder with a
+2,048-token ceiling. Documents shorter than that ceiling remain unpadded until
+batch collation. Longer documents use a deterministic headline + article lead
++ article tail policy rather than prefix-only truncation. The preparation audit
+records the original length distribution, truncation rate, and retained-token
+ratio. This delivery writes to the isolated
+`vldbench_modernbert_long_v1` output root and cannot resume the earlier
+DeBERTa/512-token run.
 
 Prepare and audit the real releases before training:
 
@@ -180,7 +188,7 @@ python scripts/evaluate_binary_benchmark.py config/benchmark_multibanfakedetect.
 
 python scripts/binary_benchmark_capacity_test.py \
   config/benchmark_vldbench.yaml \
-  --batch-size 2 --batches 8 --gradient-accumulation-steps 8
+  --batch-size 1 --batches 16 --gradient-accumulation-steps 16
 
 python scripts/train_binary_benchmark.py config/benchmark_vldbench.yaml
 python scripts/evaluate_binary_benchmark.py config/benchmark_vldbench.yaml

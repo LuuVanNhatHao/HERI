@@ -100,6 +100,12 @@ def run_binary_capacity_test(
     ):
         if batch_index > batches:
             break
+        capacity_text_tokens = _capacity_text_tokens(config)
+        if capacity_text_tokens is not None:
+            raw_batch = expand_capacity_text_batch(
+                raw_batch,
+                target_length=capacity_text_tokens,
+            )
         batch = move_batch_to_device(raw_batch, device)
         with precision.autocast():
             output = model(batch)
@@ -147,6 +153,7 @@ def run_binary_capacity_test(
         "completed_batches": completed_batches,
         "completed_optimizer_steps": completed_steps,
         "completed_samples": completed_samples,
+        "capacity_text_tokens": _capacity_text_tokens(config),
         "duration_seconds": duration,
         "samples_per_second": completed_samples / max(duration, 1e-9),
         "precision": precision.actual,
@@ -156,6 +163,81 @@ def run_binary_capacity_test(
         "snapshots": snapshots,
         "checkpoint_written": False,
     }
+
+
+def expand_capacity_text_batch(
+    batch: Mapping[str, Any],
+    *,
+    target_length: int,
+) -> dict[str, Any]:
+    """Expand structural text tensors to a worst-case active sequence length.
+
+    This is capacity-test-only data. Repeating the final valid token makes the
+    attention mask fully active, preventing unpadding kernels from understating
+    long-context activation memory.
+    """
+
+    expanded = dict(batch)
+    input_ids = batch["text_input_ids"]
+    attention_mask = batch["text_attention_mask"].to(torch.bool)
+    word_ids = batch["text_word_ids"]
+    grounding_mask = batch["text_grounding_mask"].to(torch.bool)
+    if input_ids.ndim != 2 or target_length <= 0:
+        raise ValueError("Capacity text expansion requires [B,L] IDs and a positive target")
+    if input_ids.shape[1] >= target_length:
+        return expanded
+    rows = int(input_ids.shape[0])
+    new_ids = input_ids.new_empty((rows, target_length))
+    new_attention = torch.ones(
+        (rows, target_length), dtype=torch.bool, device=attention_mask.device
+    )
+    new_word_ids = word_ids.new_empty((rows, target_length))
+    new_grounding = torch.ones(
+        (rows, target_length), dtype=torch.bool, device=grounding_mask.device
+    )
+    current_length = int(input_ids.shape[1])
+    new_ids[:, :current_length] = input_ids
+    new_attention[:, :current_length] = attention_mask
+    new_word_ids[:, :current_length] = word_ids
+    new_grounding[:, :current_length] = grounding_mask
+    for row in range(rows):
+        valid_positions = attention_mask[row].nonzero(as_tuple=False).flatten()
+        if valid_positions.numel() == 0:
+            raise ValueError("Capacity text expansion encountered an empty sequence")
+        final_position = int(valid_positions[-1])
+        padding_positions = (~attention_mask[row]).nonzero(as_tuple=False).flatten()
+        appended_positions = torch.arange(
+            current_length,
+            target_length,
+            dtype=torch.long,
+            device=input_ids.device,
+        )
+        fill_positions = torch.cat((padding_positions, appended_positions))
+        new_ids[row, fill_positions] = input_ids[row, final_position]
+        new_attention[row, fill_positions] = True
+        new_grounding[row, fill_positions] = True
+        valid_word_ids = word_ids[row][word_ids[row] >= 0]
+        next_word_id = int(valid_word_ids.max()) + 1 if valid_word_ids.numel() else 0
+        new_word_ids[row, fill_positions] = torch.arange(
+            next_word_id,
+            next_word_id + fill_positions.numel(),
+            dtype=word_ids.dtype,
+            device=word_ids.device,
+        )
+    expanded["text_input_ids"] = new_ids
+    expanded["text_attention_mask"] = new_attention
+    expanded["text_word_ids"] = new_word_ids
+    expanded["text_grounding_mask"] = new_grounding
+    return expanded
+
+
+def _capacity_text_tokens(config: Mapping[str, Any]) -> int | None:
+    if str(config["dataset"]["adapter"]).casefold() != "vldbench":
+        return None
+    long_context = config["dataset"]["text"].get("long_context", {})
+    if not bool(long_context.get("enabled", False)):
+        return None
+    return int(config["tokenizer"]["max_length"])
 
 
 def _indexed_cuda_device(value: str) -> torch.device:

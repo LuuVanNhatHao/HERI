@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from torch import nn
 
-from src.models.encoders.deberta import DeBERTaEncoder
+from src.models.encoders.deberta import ContextTextEncoder
 from src.models.encoders.dinov3 import DINOv3Encoder
 from src.models.encoders.siglip2 import SigLIP2Encoder
 
@@ -22,12 +22,15 @@ def build_backbones(config: Mapping[str, Any]) -> dict[str, nn.Module]:
     merged = {}
     for name, backbone_config in backbones.items():
         cfg = dict(backbone_config)
-        cfg["runtime"] = runtime
+        backbone_runtime = dict(runtime)
+        if cfg.get("attn_implementation") not in (None, ""):
+            backbone_runtime["attn_implementation"] = cfg["attn_implementation"]
+        cfg["runtime"] = backbone_runtime
         merged[name] = cfg
     return {
         "siglip2": SigLIP2Encoder.from_config(merged["siglip2"]),
         "dinov3": DINOv3Encoder.from_config(merged["dinov3"]),
-        "deberta": DeBERTaEncoder.from_config(merged["deberta"]),
+        "deberta": ContextTextEncoder.from_config(merged["deberta"]),
     }
 
 

@@ -132,14 +132,22 @@ def validate_binary_benchmark_config(
 
     if str(require_key(config, "task.type")) != PRIMARY_TASK:
         raise ConfigError(f"task.type must be {PRIMARY_TASK!r}")
-    if str(require_key(config, "project.architecture_version")) != "hera_binary_final_v2":
-        raise ConfigError("Binary benchmark architecture_version must be hera_binary_final_v2")
     if not str(require_key(config, "project.config_name")).strip():
         raise ConfigError("project.config_name must be non-empty")
     adapter = str(require_key(config, "dataset.adapter")).strip().casefold()
     if adapter not in SUPPORTED_DATASETS:
         raise ConfigError(
             f"dataset.adapter must be one of {sorted(SUPPORTED_DATASETS)}"
+        )
+    architecture_version = str(require_key(config, "project.architecture_version"))
+    expected_architecture = (
+        "hera_binary_long_context_v3"
+        if adapter == "vldbench"
+        else "hera_binary_final_v2"
+    )
+    if architecture_version != expected_architecture:
+        raise ConfigError(
+            f"{adapter} architecture_version must be {expected_architecture}"
         )
     duplicate_policy = str(
         require_key(config, "dataset.cross_split_duplicate_policy")
@@ -414,6 +422,43 @@ def _validate_dataset_specific(
             != "group_exclusive"
         ):
             raise ConfigError("VLDBench split construction must be group_exclusive")
+        model_name = "answerdotai/ModernBERT-large"
+        if str(require_key(config, "backbones.deberta.name")) != model_name:
+            raise ConfigError(
+                f"Canonical long-context VLDBench requires {model_name}"
+            )
+        if str(require_key(config, "tokenizer.name")) != model_name:
+            raise ConfigError(
+                f"Canonical long-context VLDBench tokenizer must be {model_name}"
+            )
+        if int(require_key(config, "tokenizer.max_length")) != 2048:
+            raise ConfigError(
+                "Canonical long-context VLDBench must start with tokenizer.max_length=2048"
+            )
+        long_context = "dataset.text.long_context"
+        if not bool(require_key(config, f"{long_context}.enabled")):
+            raise ConfigError("VLDBench long-context policy must be enabled")
+        if (
+            str(require_key(config, f"{long_context}.strategy"))
+            != "headline_lead_tail_token_budget_v1"
+        ):
+            raise ConfigError(
+                "VLDBench must use headline_lead_tail_token_budget_v1"
+            )
+        headline_max = int(
+            require_key(config, f"{long_context}.headline_max_tokens")
+        )
+        if not 0 < headline_max < int(require_key(config, "tokenizer.max_length")):
+            raise ConfigError(
+                "VLDBench headline_max_tokens must be in (0,tokenizer.max_length)"
+            )
+        lead_fraction = float(
+            require_key(config, f"{long_context}.article_lead_fraction")
+        )
+        if not 0 < lead_fraction < 1:
+            raise ConfigError("VLDBench article_lead_fraction must be in (0,1)")
+        if int(require_key(config, f"{long_context}.audit_batch_size")) <= 0:
+            raise ConfigError("VLDBench long-text audit_batch_size must be positive")
         parquet = Path(str(require_key(config, "dataset.parquet")))
         manifest = Path(str(require_key(config, "dataset.split_manifest.path")))
         require_key(config, "dataset.split_manifest.seed")

@@ -108,6 +108,7 @@ def benchmark_signature(config: Mapping[str, Any]) -> dict[str, Any]:
         "primary_target": config["task"]["primary_target"],
         "text_fields": list(dataset["text"]["fields"]),
         "text_normalization": text_normalization_signature(config),
+        "long_text_policy": dict(dataset["text"].get("long_context", {})),
         "tokenizer_name": config["tokenizer"]["name"],
         "tokenizer_max_length": int(config["tokenizer"]["max_length"]),
         "image_size": int(config["image"]["size"]),

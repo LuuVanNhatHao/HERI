@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 
 from src.benchmarks.artifacts import load_checkpoint_payload, save_last_checkpoint
+from src.benchmarks.capacity import expand_capacity_text_batch
 from src.benchmarks.state import BenchmarkTrainingState
 from src.benchmarks.training_utils import (
     checkpoint_stage_is_eligible,
@@ -93,3 +94,25 @@ def test_best_checkpoint_selection_excludes_frozen_warmup_epochs() -> None:
     assert checkpoint_stage_is_eligible(config, 1) is False
     assert checkpoint_stage_is_eligible(config, 3) is False
     assert checkpoint_stage_is_eligible(config, 4) is True
+
+
+def test_capacity_expansion_activates_worst_case_long_context() -> None:
+    batch = {
+        "text_input_ids": torch.tensor([[11, 12, 13], [21, 22, 0]]),
+        "text_attention_mask": torch.tensor(
+            [[True, True, True], [True, True, False]]
+        ),
+        "text_word_ids": torch.tensor([[0, 1, -1], [0, 1, -1]]),
+        "text_grounding_mask": torch.tensor(
+            [[True, True, False], [True, True, False]]
+        ),
+    }
+
+    expanded = expand_capacity_text_batch(batch, target_length=6)
+
+    assert expanded["text_input_ids"].shape == (2, 6)
+    assert expanded["text_input_ids"][0].tolist() == [11, 12, 13, 13, 13, 13]
+    assert expanded["text_input_ids"][1].tolist() == [21, 22, 22, 22, 22, 22]
+    assert expanded["text_attention_mask"].all()
+    assert expanded["text_grounding_mask"][:, 3:].all()
+    assert expanded["text_word_ids"][0, 3:].tolist() == [2, 3, 4]

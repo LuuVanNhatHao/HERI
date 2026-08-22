@@ -7,7 +7,7 @@ from typing import Any, Mapping
 import torch
 from torch import nn
 
-from src.models.encoders.deberta import DeBERTaEncoder
+from src.models.encoders.deberta import ContextTextEncoder
 from src.models.encoders.dinov3 import DINOv3Encoder
 from src.models.encoders.siglip2 import SigLIP2Encoder
 from src.models.outputs import BackboneOutputs
@@ -18,7 +18,7 @@ class BaselineBackboneMixin:
 
     siglip2: SigLIP2Encoder | None
     dinov3: DINOv3Encoder | None
-    deberta: DeBERTaEncoder | None
+    deberta: ContextTextEncoder | None
 
     def _encode_backbones(
         self,

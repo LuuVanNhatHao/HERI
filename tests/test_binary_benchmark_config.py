@@ -116,3 +116,34 @@ def test_multiban_rejects_missing_banglabert_normalization() -> None:
 
     with pytest.raises(ConfigError, match="requires text normalization"):
         validate_binary_benchmark_config(config, mode="prepare")
+
+
+def test_vldbench_uses_modernbert_and_isolates_long_context_run() -> None:
+    config = load_yaml_config(CONFIGS[1])
+    validate_binary_benchmark_config(config, mode="prepare")
+
+    assert config["project"]["architecture_version"] == "hera_binary_long_context_v3"
+    assert config["project"]["config_name"] == "benchmark_vldbench_modernbert_long_v1"
+    assert config["tokenizer"]["name"] == "answerdotai/ModernBERT-large"
+    assert config["tokenizer"]["max_length"] == 2048
+    assert config["backbones"]["deberta"]["name"] == "answerdotai/ModernBERT-large"
+    assert config["dataset"]["text"]["long_context"] == {
+        "enabled": True,
+        "strategy": "headline_lead_tail_token_budget_v1",
+        "headline_max_tokens": 128,
+        "article_lead_fraction": 0.67,
+        "audit_batch_size": 128,
+    }
+    assert config["training"]["micro_batch_size"] == 1
+    assert config["training"]["gradient_accumulation_steps"] == 16
+    assert config["dataloader"]["batch_size"] == 1
+    assert config["output"]["root"].endswith("vldbench_modernbert_long_v1")
+
+
+def test_vldbench_rejects_legacy_short_context_backbone() -> None:
+    config = copy.deepcopy(load_yaml_config(CONFIGS[1]))
+    config["backbones"]["deberta"]["name"] = "microsoft/deberta-v3-large"
+    config["tokenizer"]["name"] = "microsoft/deberta-v3-large"
+
+    with pytest.raises(ConfigError, match="ModernBERT-large"):
+        validate_binary_benchmark_config(config, mode="prepare")

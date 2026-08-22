@@ -27,6 +27,7 @@ class BinaryBenchmarkRecord:
     text_label_target: float = 0.0
     text_label_available: bool = False
     metadata: Mapping[str, Any] | None = None
+    text_parts: Mapping[str, str] | None = None
 
 
 class BinaryBenchmarkDataset(Dataset[dict[str, Any]], ABC):
@@ -69,11 +70,11 @@ class BinaryBenchmarkDataset(Dataset[dict[str, Any]], ABC):
             raise ValueError(
                 f"Empty benchmark text: split={self.split} id={record.sample_id}"
             )
-        encoded = _encode_text(
-            self.tokenizer,
-            text,
-            max_length=self.tokenizer_max_length,
-        )
+        encoded = self.encode_record_text(record)
+        encoding_audit = dict(encoded.get("audit", {}))
+        metadata = dict(record.metadata or {})
+        if encoding_audit:
+            metadata["text_encoding"] = encoding_audit
         return {
             "id": str(record.sample_id),
             "split": self.split,
@@ -109,9 +110,18 @@ class BinaryBenchmarkDataset(Dataset[dict[str, Any]], ABC):
             "text_label_available": torch.tensor(
                 bool(record.text_label_available), dtype=torch.bool
             ),
-            "metadata": dict(record.metadata or {}),
+            "metadata": metadata,
             "text_pad_token_id": int(getattr(self.tokenizer, "pad_token_id", 0) or 0),
         }
+
+    def encode_record_text(self, record: BinaryBenchmarkRecord) -> dict[str, Any]:
+        """Encode one record; dataset adapters may override selection policy."""
+
+        return _encode_text(
+            self.tokenizer,
+            record.text,
+            max_length=self.tokenizer_max_length,
+        )
 
 
 def _encode_text(

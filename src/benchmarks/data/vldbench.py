@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 from PIL import Image
 
 from src.benchmarks.contracts import binary_label_from_vldbench
+from src.benchmarks.long_text import LongTextPolicy, encode_headline_article
 
 from .base import BinaryBenchmarkDataset, BinaryBenchmarkRecord
 
@@ -72,6 +73,14 @@ class VLDBenchDataset(BinaryBenchmarkDataset):
             )
         self.text_fields = tuple(str(value) for value in dataset["text"]["fields"])
         self.separator = str(dataset["text"]["separator"])
+        long_context = dataset["text"]["long_context"]
+        if not bool(long_context["enabled"]):
+            raise ValueError("VLDBench requires the configured long-text policy")
+        self.long_text_policy = LongTextPolicy.from_config(
+            long_context,
+            max_length=self.tokenizer_max_length,
+        )
+        self.long_text_policy.validate()
         unknown = sorted(set(self.text_fields) - set(self.table.column_names))
         if unknown:
             raise ValueError(f"Unknown VLDBench text fields: {unknown}")
@@ -132,4 +141,21 @@ class VLDBenchDataset(BinaryBenchmarkDataset):
                 "outlet": str(row["outlet"]),
                 "source_row": source_row,
             },
+            text_parts={
+                "headline": str(row["headline"]).strip(),
+                "article": str(row["article_text"]).strip(),
+            },
+        )
+
+    def encode_record_text(self, record: BinaryBenchmarkRecord) -> dict[str, Any]:
+        """Apply deterministic headline/lead/tail selection for long news text."""
+
+        parts = record.text_parts
+        if parts is None:
+            raise ValueError("VLDBench record is missing headline/article text parts")
+        return encode_headline_article(
+            self.tokenizer,
+            headline=parts["headline"],
+            article=parts["article"],
+            policy=self.long_text_policy,
         )

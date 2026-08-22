@@ -14,7 +14,10 @@ import pandas as pd
 import pyarrow.parquet as pq
 from PIL import Image
 
+from src.compat.transformers_compat import load_fast_tokenizer
+
 from .data.multiban import IMAGE_EXTENSIONS
+from .long_text import LongTextPolicy, summarize_long_text_lengths
 from .splits import build_vldbench_split_manifest
 from .text_normalization import BenchmarkTextNormalizer
 
@@ -214,6 +217,23 @@ def audit_vldbench(config: Mapping[str, Any]) -> dict[str, Any]:
         with Image.open(BytesIO(image_bytes)) as image:
             image.load()
             image_formats[str(image.format)] += 1
+    long_context_config = dataset["text"]["long_context"]
+    tokenizer = load_fast_tokenizer(
+        name=str(config["tokenizer"]["name"]),
+        use_fast=True,
+        local_files_only=bool(config["tokenizer"].get("local_files_only", False)),
+    )
+    long_text_policy = LongTextPolicy.from_config(
+        long_context_config,
+        max_length=int(config["tokenizer"]["max_length"]),
+    )
+    text_length_audit = summarize_long_text_lengths(
+        tokenizer,
+        headlines=[str(value) for value in required_table["headline"].to_pylist()],
+        articles=[str(value) for value in required_table["article_text"].to_pylist()],
+        policy=long_text_policy,
+        batch_size=int(long_context_config["audit_batch_size"]),
+    )
     return {
         "dataset": "VLDBench",
         "rows": int(parquet.metadata.num_rows),
@@ -237,6 +257,7 @@ def audit_vldbench(config: Mapping[str, Any]) -> dict[str, Any]:
         ).to_dict(),
         "unique_image_hashes": int(manifest["image_sha256"].nunique()),
         "cross_split_image_groups": int((group_splits > 1).sum()),
+        "text_length_audit": text_length_audit,
     }
 
 

@@ -1,4 +1,4 @@
-"""DeBERTa contextual text encoder wrapper."""
+"""Generic contextual text encoder wrapper (legacy module path)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from .common import freeze_module, masked_mean, unfreeze_last_blocks
 from ..outputs import DeBERTaOutput
 
 
-class DeBERTaEncoder(nn.Module):
-    """Production DeBERTa wrapper using Phase-1 fast-tokenizer alignment."""
+class ContextTextEncoder(nn.Module):
+    """Production AutoModel wrapper with fast-tokenizer alignment."""
 
     def __init__(
         self,
@@ -29,14 +29,14 @@ class DeBERTaEncoder(nn.Module):
         self.model_name = model_name
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any]) -> "DeBERTaEncoder":
-        """Load the configured DeBERTa model and fast tokenizer."""
+    def from_config(cls, config: Mapping[str, Any]) -> "ContextTextEncoder":
+        """Load the configured encoder-only text model and fast tokenizer."""
 
         name = str(config["name"])
         runtime = config.get("runtime", {})
         model = load_auto_model(
             name=name,
-            stage="DeBERTa",
+            stage="ContextTextEncoder",
             revision=config.get("revision"),
             local_files_only=bool(config.get("local_files_only", False)),
             trust_remote_code=bool(config.get("trust_remote_code", False)),
@@ -52,14 +52,14 @@ class DeBERTaEncoder(nn.Module):
         return cls(model=model, tokenizer=tokenizer, model_name=name)
 
     def freeze_all(self) -> None:
-        """Freeze all DeBERTa parameters."""
+        """Freeze all contextual text encoder parameters."""
 
         freeze_module(self.model)
 
     def unfreeze_last_blocks(self, count: int) -> int:
-        """Unfreeze final DeBERTa blocks via compatibility introspection."""
+        """Unfreeze final text encoder blocks via compatibility introspection."""
 
-        return unfreeze_last_blocks(self.model, count, stage_name="DeBERTa")
+        return unfreeze_last_blocks(self.model, count, stage_name="ContextTextEncoder")
 
     def forward(
         self,
@@ -94,4 +94,8 @@ def _extract_last_hidden_state(outputs: Any) -> torch.Tensor:
         value = outputs.get("last_hidden_state")
         if isinstance(value, torch.Tensor):
             return value
-    raise ValueError("DeBERTa output missing last_hidden_state")
+    raise ValueError("Context text encoder output missing last_hidden_state")
+
+
+# Backward-compatible import for DGM4 and existing checkpoints/configuration code.
+DeBERTaEncoder = ContextTextEncoder

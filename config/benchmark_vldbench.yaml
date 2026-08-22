@@ -1,8 +1,8 @@
 project:
   name: HERA-VLDBench
   seed: 42
-  architecture_version: hera_binary_final_v2
-  config_name: benchmark_vldbench
+  architecture_version: hera_binary_long_context_v3
+  config_name: benchmark_vldbench_modernbert_long_v1
 
 task:
   type: binary_multimodal
@@ -30,6 +30,12 @@ dataset:
   text:
     fields: [headline, article_text]
     separator: "\n\n"
+    long_context:
+      enabled: true
+      strategy: headline_lead_tail_token_budget_v1
+      headline_max_tokens: 128
+      article_lead_fraction: 0.67
+      audit_batch_size: 128
   split_manifest:
     path: data/VLDBench/splits_seed42.csv
     seed: 42
@@ -45,9 +51,9 @@ image:
 
 tokenizer:
   enabled: true
-  name: microsoft/deberta-v3-large
+  name: answerdotai/ModernBERT-large
   use_fast: true
-  max_length: 512
+  max_length: 2048
   local_files_only: false
   ignore_index: -100
 
@@ -68,10 +74,13 @@ backbones:
     image_mean: [0.485, 0.456, 0.406]
     image_std: [0.229, 0.224, 0.225]
   deberta:
-    name: microsoft/deberta-v3-large
+    # Legacy key retained for optimizer/checkpoint compatibility; this is the
+    # generic contextual text encoder and now loads ModernBERT.
+    name: answerdotai/ModernBERT-large
     revision:
     local_files_only: false
     trust_remote_code: false
+    attn_implementation:
 
 evidence:
   hidden_dim: 512
@@ -145,8 +154,8 @@ loss:
 
 training:
   epochs: 12
-  micro_batch_size: 2
-  gradient_accumulation_steps: 8
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
   max_grad_norm: 1.0
   resume_from:
   auto_resume: {enabled: true, run_dir: null, checkpoint_name: last.pt}
@@ -164,7 +173,7 @@ training:
 optimizer:
   type: adamw
   lr_new: 0.0001
-  lr_backbones: {siglip2: 0.000002, dinov3: 0.000002, deberta: 0.000002}
+  lr_backbones: {siglip2: 0.000001, dinov3: 0.000001, deberta: 0.000001}
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 0.00000001
@@ -183,7 +192,7 @@ checkpointing:
   minimum_free_gib: 20
 
 dataloader:
-  batch_size: 2
+  batch_size: 1
   num_workers: 8
   worker_threads: 1
   pin_memory: true
@@ -218,4 +227,4 @@ evaluation:
   output_dir:
 progress: {enabled: true}
 logging: {level: INFO}
-output: {root: outputs/benchmarks_final/vldbench}
+output: {root: outputs/benchmarks_final/vldbench_modernbert_long_v1}
