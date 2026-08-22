@@ -105,13 +105,18 @@ def encode_headline_article(
         padding=False,
         truncation=False,
         return_attention_mask=True,
-        return_special_tokens_mask=True,
+        return_special_tokens_mask=False,
     )
     input_ids = _to_int_list(prepared["input_ids"])
     attention_mask = _to_int_list(
         prepared.get("attention_mask", [1] * len(input_ids))
     )
-    special_mask = _to_int_list(prepared["special_tokens_mask"])
+    special_mask_method = getattr(tokenizer, "get_special_tokens_mask", None)
+    if not callable(special_mask_method):
+        raise TypeError("Long-text tokenizer must expose get_special_tokens_mask")
+    special_mask = _to_int_list(
+        special_mask_method(input_ids, already_has_special_tokens=True)
+    )
     if not (len(input_ids) == len(attention_mask) == len(special_mask)):
         raise ValueError("Prepared long-text tensors have inconsistent lengths")
     if len(input_ids) > policy.max_length:

@@ -46,8 +46,13 @@ class _WhitespacePairTokenizer:
         return {
             "input_ids": input_ids,
             "attention_mask": [1] * len(input_ids),
-            "special_tokens_mask": [1, *([0] * len(ids)), 1, *([0] * len(pair_ids)), 1],
         }
+
+    def get_special_tokens_mask(
+        self, input_ids: list[int], *, already_has_special_tokens: bool
+    ) -> list[int]:
+        assert already_has_special_tokens is True
+        return [int(token_id in {101, 102}) for token_id in input_ids]
 
 
 def _policy(max_length: int = 20) -> LongTextPolicy:
@@ -119,4 +124,3 @@ def test_long_text_length_audit_reports_real_retention() -> None:
     assert report["truncated_samples"] == 1
     assert report["truncated_fraction"] == pytest.approx(0.5)
     assert report["retained_tokens"]["max"] == 20
-
