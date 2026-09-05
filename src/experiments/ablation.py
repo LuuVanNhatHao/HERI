@@ -135,8 +135,19 @@ def validate_hera_checkpoint_variant(
 ) -> None:
     """Prevent resume/evaluation from silently crossing experiment variants."""
 
+    from .cycle_study import (
+        get_hera_cycle_study_variant,
+        validate_hera_cycle_study_contract,
+    )
+
     current_variant = get_hera_ablation_variant(current_config)
+    if current_config.get("scientific_study", {}) != checkpoint_config.get("scientific_study", {}):
+        raise ValueError(f"{context} checkpoint scientific-study mismatch")
+    if current_config.get("reasoning_control", {}) != checkpoint_config.get("reasoning_control", {}):
+        raise ValueError(f"{context} checkpoint reasoning-control mismatch")
     checkpoint_variant = get_hera_ablation_variant(checkpoint_config)
+    current_cycle_variant = get_hera_cycle_study_variant(current_config)
+    checkpoint_cycle_variant = get_hera_cycle_study_variant(checkpoint_config)
     if checkpoint_config.get("model", {}).get("model_type") != "hera":
         raise ValueError(f"{context} checkpoint is not a HERA checkpoint")
     current_architecture = _get(current_config, "project.architecture_version")
@@ -151,6 +162,20 @@ def validate_hera_checkpoint_variant(
             f"{context} checkpoint variant mismatch: current={current_variant!r}, "
             f"checkpoint={checkpoint_variant!r}"
         )
+    if checkpoint_cycle_variant != current_cycle_variant:
+        raise ValueError(
+            f"{context} checkpoint cycle-study mismatch: "
+            f"current={current_cycle_variant!r}, checkpoint={checkpoint_cycle_variant!r}"
+        )
+    if checkpoint_cycle_variant is not None:
+        validate_hera_cycle_study_contract(checkpoint_config)
+        current_protocol = _get(current_config, "cycle_study.protocol_id")
+        checkpoint_protocol = _get(checkpoint_config, "cycle_study.protocol_id")
+        if current_protocol != checkpoint_protocol:
+            raise ValueError(
+                f"{context} checkpoint cycle-study protocol mismatch: "
+                f"current={current_protocol!r}, checkpoint={checkpoint_protocol!r}"
+            )
 
 
 def _get(config: Mapping[str, Any], dotted_key: str, default: Any = None) -> Any:

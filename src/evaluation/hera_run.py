@@ -14,7 +14,12 @@ from src.data.loader import create_dataloader
 from src.evaluation.evaluator import compute_metrics_and_reports, run_inference
 from src.evaluation.run import _load_thresholds
 from src.evaluation.summary import write_predictions_csv, write_summary_csv
-from src.experiments import get_hera_ablation_variant, validate_hera_checkpoint_variant
+from src.experiments import (
+    cycle_study_protocol,
+    get_hera_ablation_variant,
+    get_hera_cycle_study_variant,
+    validate_hera_checkpoint_variant,
+)
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADGM
 from src.training.checkpoint import restore_checkpoint
@@ -148,7 +153,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     )
     restore_checkpoint(checkpoint=checkpoint, model=model, restore_rng=False)
     ensure_no_uninitialized_parameters(model, context="HERA evaluation checkpoint load")
-    thresholds = _load_thresholds(thresholds_path, checkpoint_path=checkpoint_path)
+    thresholds = _load_thresholds(thresholds_path, checkpoint_path=checkpoint_path, checkpoint=checkpoint)
     bundle = run_inference(
         model=model,
         loader=loader,
@@ -160,6 +165,16 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         progress=bool(config["progress"]["enabled"]),
     )
     reports = compute_metrics_and_reports(bundle, thresholds)
+    intervention_config = config["evaluation"].get("image_deletion", {})
+    if intervention_config.get("enabled", False):
+        from src.evaluation.interventions import evaluate_image_deletion
+        evaluate_image_deletion(
+            model=model, loader=loader, device=device, precision=precision,
+            path=run_dir / "metrics/image_deletion.json",
+            random_repeats=int(intervention_config.get("random_repeats", 5)),
+            seed=int(intervention_config.get("seed", 2026)),
+            max_batches=intervention_config.get("max_batches"),
+        )
     tqdm.write("Test binary classification_report:")
     tqdm.write(reports["binary_report"])
     tqdm.write("Test attribution classification_report:")
@@ -174,9 +189,28 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         encoding="utf-8",
     )
     ablation_variant = get_hera_ablation_variant(config)
+    cycle_study_variant = get_hera_cycle_study_variant(config)
+    cycle_protocol = (
+        cycle_study_protocol(cycle_study_variant)
+        if cycle_study_variant is not None
+        else {
+            "cycles": int(config["graph"]["reasoning"]["cycles"]),
+            "dynamic_rebuild": bool(
+                config["graph"]["reasoning"]["dynamic_rebuild"]
+            ),
+            "rebuild_mode": "state_dependent",
+        }
+    )
     training_micro_batch = int(checkpoint_config["dataloader"]["batch_size"])
+    query_control = bool(config.get("reasoning_control", {}).get("enabled", False))
+    if query_control:
+        cycle_protocol["rebuild_mode"] = "none"
     training_accumulation = int(checkpoint_config["training"]["gradient_accumulation_steps"])
     run_info = {
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "checkpoint_evaluation_protocol": checkpoint.get("evaluation_protocol", "legacy"),
+        "scientific_study_id": config.get("scientific_study", {}).get("protocol_id"),
+        "scientific_variant": config.get("scientific_study", {}).get("variant"),
         "run_id": run_id,
         "model_name": config["project"]["name"],
         "architecture_version": config["project"]["architecture_version"],
@@ -184,8 +218,18 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         "grounding_routing": config["model"]["grounding"]["routing"],
         "graph_reasoning_cycles": config["graph"]["reasoning"]["cycles"],
         "dynamic_graph_rebuild": config["graph"]["reasoning"]["dynamic_rebuild"],
-        "model_variant": f"hera_{ablation_variant}" if ablation_variant else "hera",
+        "graph_rebuild_mode": cycle_protocol["rebuild_mode"],
+        "model_variant": (
+            "hera_learned_queries" if query_control else f"hera_cycle_{cycle_study_variant}"
+            if cycle_study_variant
+            else (f"hera_{ablation_variant}" if ablation_variant else "hera")
+        ),
+        "reasoning_backend": "learned_queries" if query_control else config["graph"]["type"],
         "ablation_variant": ablation_variant or "canonical",
+        "cycle_study_variant": cycle_study_variant or "none",
+        "cycle_study_protocol_id": config.get("cycle_study", {}).get(
+            "protocol_id"
+        ),
         "seed": config["project"]["seed"],
         "checkpoint": str(checkpoint_path),
         "split": config["evaluation"]["split"],

@@ -59,6 +59,7 @@ def build_baseline_model(
         )
     if baseline_type == "b1_cross_attention":
         return B1CrossAttentionBaseline(
+            binary_aggregation=str(model_config.get("binary_aggregation", "independent_head")),
             num_layers=int(model_config["num_attention_layers"]),
             num_heads=int(model_config["num_heads"]),
             **common,

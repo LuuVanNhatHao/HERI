@@ -37,8 +37,8 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             raise ValueError("The GATv2 ablation cannot be combined with homogeneous_evidence")
         self.hidden_dim = int(config["hidden_dim"])
         self.cycles = int(config["reasoning"]["cycles"])
-        if self.cycles < 1 or self.cycles > 2:
-            raise ValueError("Phase-4 reasoning cycles must be 1 or 2")
+        if self.cycles < 1 or self.cycles > 3:
+            raise ValueError("Graph reasoning cycles must be in the supported study range [1,3]")
         self.dynamic_rebuild = bool(config["reasoning"].get("dynamic_rebuild", False))
         if self.dynamic_rebuild and self.cycles < 2:
             raise ValueError("dynamic hypothesis refinement requires graph.reasoning.cycles >= 2")
@@ -79,13 +79,30 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         current_evidence = evidence
         current_hypotheses = initial_hypotheses
         graph = None
+        static_graph = None
+        graph_build_count = 0
         x_dict: dict[str, torch.Tensor] = {}
         intermediate: list[torch.Tensor] = []
         cycle_statistics: list[dict[str, Any]] = []
         for cycle_index in range(self.cycles):
-            if cycle_index > 0 and self.dynamic_rebuild:
+            if cycle_index == 0:
+                graph = self.builder.build(current_evidence, current_hypotheses)
+                static_graph = graph
+                graph_build_count += 1
+            elif self.dynamic_rebuild:
                 current_evidence = _refresh_cross_modal_metadata(current_evidence)
-            graph = self.builder.build(current_evidence, current_hypotheses)
+                graph = self.builder.build(current_evidence, current_hypotheses)
+                graph_build_count += 1
+            else:
+                if static_graph is None or not x_dict:
+                    raise RuntimeError(
+                        "Static multi-pass reasoning requires an initialized graph state"
+                    )
+                graph = _reuse_static_graph(
+                    static_graph,
+                    updated_node_features=x_dict,
+                    cycle_index=cycle_index,
+                )
             encoder = getattr(self, self._encoder_name)
             x_dict = encoder(graph.x_dict, graph.edge_index_dict, graph.edge_attr_dict)
             current_hypotheses = _unflatten_hypotheses(x_dict[HYPOTHESIS], batch_size=batch_size)
@@ -107,6 +124,12 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             graph_statistics={
                 **graph_statistics(graph),
                 "dynamic_rebuild": self.dynamic_rebuild,
+                "rebuild_mode": _rebuild_mode(
+                    cycles=self.cycles,
+                    dynamic_rebuild=self.dynamic_rebuild,
+                ),
+                "graph_build_count": graph_build_count,
+                "reliability_reassessment": False,
                 "cycle_statistics": cycle_statistics,
             },
             updated_node_features=x_dict,
@@ -123,6 +146,38 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         """Return the active graph encoder for parameter accounting."""
 
         return getattr(self, self._encoder_name)
+
+
+def _rebuild_mode(*, cycles: int, dynamic_rebuild: bool) -> str:
+    if cycles == 1:
+        return "none"
+    return "state_dependent" if dynamic_rebuild else "static"
+
+
+def _reuse_static_graph(
+    graph: Any,
+    *,
+    updated_node_features: Mapping[str, torch.Tensor],
+    cycle_index: int,
+) -> Any:
+    """Reuse frozen topology/edge attributes with the latest node states.
+
+    This is the depth-only control used by the cycle study.  No graph builder,
+    semantic re-query, edge selection, edge-strength update, or reliability
+    update is performed after the first pass.
+    """
+
+    reused = replace(
+        graph,
+        x_dict=dict(updated_node_features),
+        metadata={
+            **dict(graph.metadata),
+            "static_graph_reuse": True,
+            "static_graph_cycle_index": int(cycle_index),
+        },
+    )
+    reused.validate()
+    return reused
 
 
 def _unflatten_hypotheses(features: torch.Tensor, *, batch_size: int) -> torch.Tensor:

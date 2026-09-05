@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -11,6 +12,7 @@ import torch
 
 from src.training.state import TrainingState
 from src.training.optimizer import ensure_no_uninitialized_parameters
+from src.evaluation.protocol import EVALUATION_PROTOCOL
 
 
 def validate_baseline_checkpoint_config(
@@ -22,6 +24,13 @@ def validate_baseline_checkpoint_config(
     """Reject legacy/cross-variant baseline checkpoints before loading weights."""
 
     current_type = current_config.get("model", {}).get("baseline_type")
+    if current_config.get("scientific_study", {}) != checkpoint_config.get("scientific_study", {}):
+        raise ValueError(f"{context} checkpoint scientific-study mismatch")
+    for key in ("binary_aggregation",):
+        current = current_config.get("model", {}).get(key, "independent_head")
+        previous = checkpoint_config.get("model", {}).get(key, "independent_head")
+        if current != previous:
+            raise ValueError(f"{context} baseline {key} mismatch: {current} != {previous}")
     checkpoint_type = checkpoint_config.get("model", {}).get("baseline_type")
     if checkpoint_type != current_type:
         raise ValueError(
@@ -73,13 +82,16 @@ def save_checkpoint(
     config: Mapping[str, Any],
     precision: str,
     scheduler_plan: Mapping[str, Any] | None = None,
-) -> None:
-    """Save a complete resume-capable checkpoint."""
+) -> str:
+    """Save a complete resume-capable checkpoint and return its unique identity."""
 
     ensure_no_uninitialized_parameters(model, context="checkpoint save")
     path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_id = str(uuid.uuid4())
     torch.save(
         {
+            "checkpoint_id": checkpoint_id,
+            "evaluation_protocol": EVALUATION_PROTOCOL,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -100,6 +112,7 @@ def save_checkpoint(
         },
         path,
     )
+    return checkpoint_id
 
 
 def load_checkpoint(
@@ -135,6 +148,11 @@ def restore_checkpoint(
 ) -> dict[str, Any]:
     """Restore an already-loaded checkpoint without a second disk read."""
 
+    if (restore_rng or optimizer is not None or scheduler is not None) and checkpoint.get("evaluation_protocol") != EVALUATION_PROTOCOL:
+        raise ValueError(
+            "Cannot resume training with legacy metric-selection state. "
+            "Use weights-only evaluation (restore_rng=False) or start an isolated scientific-v3 run."
+        )
     model.load_state_dict(checkpoint["model"])
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer"])

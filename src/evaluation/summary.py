@@ -55,6 +55,8 @@ def write_predictions_csv(
                 "image_grounding_pred_box": _value_or_blank(bundle.image_grounding_pred_boxes, idx),
                 "text_grounding_target_word_ids": _value_or_blank(bundle.text_target_word_ids, idx),
                 "text_grounding_pred_word_ids": _value_or_blank(bundle.text_pred_word_ids, idx),
+                "text_word_probabilities": _value_or_blank(bundle.text_word_probabilities, idx),
+                **(bundle.text_sample_counts[idx] if idx < len(bundle.text_sample_counts) else {}),
                 "router_diagnostics": _value_or_blank(bundle.router_diagnostics, idx),
             }
         )
@@ -76,6 +78,7 @@ def write_summary_csv(
     attr_report = reports["attribution_report_dict"]
     row: dict[str, Any] = {
         **run_info,
+        **{key: value for key, value in metrics.items() if not isinstance(value, (dict, list))},
         **thresholds.as_dict(),
         "auc": metrics.get("auc"),
         "acc": metrics.get("acc"),

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-import torch
 from torch import nn
 
 from src.evidence import EvidenceStructuralMetadata, HeterogeneousEvidenceExtractor
-from src.experiments import get_hera_ablation_variant
+from src.experiments import get_hera_ablation_variant, get_hera_cycle_study_variant
 from src.graph import HypothesisEvidenceGraphReasoner
+from src.graph.query_reasoner import LearnedQueryReasoner
 from src.models.baselines.base import BaselineBackboneMixin, finite_or_fail
 from src.models.baselines.factory import build_backbones
 from src.models.outputs import BackboneOutputs
@@ -52,6 +52,10 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
         super().__init__()
         self.config = config
         self.ablation_variant = get_hera_ablation_variant(config)
+        self.cycle_study_variant = get_hera_cycle_study_variant(config)
+        self.cycle_study_protocol_id = config.get("cycle_study", {}).get(
+            "protocol_id"
+        )
         backbones = build_backbones(config) if load_backbones else {}
         self.siglip2 = siglip2 if siglip2 is not None else backbones.get("siglip2")
         self.dinov3 = dinov3 if dinov3 is not None else backbones.get("dinov3")
@@ -67,7 +71,9 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
         self.graph_reasoner = (
             graph_reasoner
             if graph_reasoner is not None
-            else HypothesisEvidenceGraphReasoner.from_config(config)
+            else (LearnedQueryReasoner(config)
+                  if config.get("reasoning_control", {}).get("enabled", False)
+                  else HypothesisEvidenceGraphReasoner.from_config(config))
         )
         self.decision = (
             decision_module
@@ -191,6 +197,8 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
             "gatv2": "GATv2",
             "homogeneous_evidence": "HomogeneousEvidenceHGT",
         }.get(self.ablation_variant, "HGT")
+        if self.config.get("reasoning_control", {}).get("enabled", False):
+            graph_label = "LearnedQueries"
         router_label = "UniformEvidenceBypass" if self.ablation_variant == "no_router" else "EvidenceReliabilityRouter"
         binary_label = (
             "IndependentHypothesisBinaryHead"
@@ -202,6 +210,8 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
                 "model_type": "hera_dgm",
                 "architecture_version": self.config["project"]["architecture_version"],
                 "ablation_variant": self.ablation_variant,
+                "cycle_study_variant": self.cycle_study_variant,
+                "cycle_study_protocol_id": self.cycle_study_protocol_id,
                 "pipeline": [
                     "SigLIP2",
                     "DINOv3",
@@ -253,10 +263,15 @@ class HERADGM(nn.Module, BaselineBackboneMixin):
             graph_metadata={
                 "statistics": dict(graph_output.graph_statistics),
                 "reasoning_cycles": len(graph_output.intermediate_hypothesis_features),
-                "graph_type": str(self.config["graph"]["type"]),
+                "graph_type": getattr(self.graph_reasoner, "graph_type", str(self.config["graph"]["type"])),
                 "evidence_mode": str(self.config["graph"].get("evidence_mode", "heterogeneous")),
                 "hypothesis_feedback": bool(
                     self.config["graph"]["reasoning"]["hypothesis_feedback"]
+                ) and not self.config.get("reasoning_control", {}).get("enabled", False),
+                "rebuild_mode": graph_output.graph_statistics.get("rebuild_mode"),
+                "graph_build_count": graph_output.graph_statistics.get("graph_build_count"),
+                "reliability_reassessment": graph_output.graph_statistics.get(
+                    "reliability_reassessment"
                 ),
             },
             cross_modal_alignment_loss=evidence.cross_modal_metadata.alignment_loss,

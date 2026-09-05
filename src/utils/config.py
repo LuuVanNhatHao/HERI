@@ -221,6 +221,11 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("Canonical baselines forbid annotation-derived dataset.mtcnn_boxes")
     if str(require_key(config, "project.architecture_version")) != "baseline_dense_bbox_v1":
         raise ConfigError("Baseline project.architecture_version must be baseline_dense_bbox_v1")
+    aggregation = config["model"].get("binary_aggregation", "independent_head")
+    if aggregation not in {"independent_head", "noisy_or"}:
+        raise ConfigError("Unknown baseline binary_aggregation")
+    if aggregation == "noisy_or" and config["model"]["baseline_type"] != "b1_cross_attention":
+        raise ConfigError("The noisy-OR baseline control is implemented for B1 only")
     if Path(str(require_key(config, "dataset.root"))).as_posix() != "data/DGM4":
         raise ConfigError("dataset.root must be the canonical value: data/DGM4")
     if Path(str(require_key(config, "dataset.image_root"))).as_posix() != "data/DGM4/images":
@@ -455,8 +460,8 @@ def validate_graph_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("graph.hidden_dim must be divisible by graph.heads")
     if layers < 1 or layers > 3:
         raise ConfigError("graph.layers must be in the Phase-4 supported range [1,3]")
-    if cycles < 1 or cycles > 2:
-        raise ConfigError("graph.reasoning.cycles must be 1 or 2")
+    if cycles < 1 or cycles > 3:
+        raise ConfigError("graph.reasoning.cycles must be in the supported study range [1,3]")
     if float(require_key(config, "graph.dropout")) < 0:
         raise ConfigError("graph.dropout must be non-negative")
     allowed_edge_keys = {
@@ -801,6 +806,24 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
             raise ConfigError(f"{key} must match model.hidden_dim")
     ablation = config.get("ablation", {})
     ablation_enabled = isinstance(ablation, Mapping) and bool(ablation.get("enabled", False))
+    cycle_study = config.get("cycle_study", {})
+    cycle_study_enabled = isinstance(cycle_study, Mapping) and bool(
+        cycle_study.get("enabled", False)
+    )
+    if ablation_enabled and cycle_study_enabled:
+        raise ConfigError("A config cannot enable both ablation and cycle_study")
+    query_control = bool(config.get("reasoning_control", {}).get("enabled", False))
+    if query_control:
+        if ablation_enabled or cycle_study_enabled:
+            raise ConfigError("Learned-query control cannot combine with component/cycle studies")
+        if config["reasoning_control"].get("variant") != "learned_queries":
+            raise ConfigError("Unknown reasoning_control.variant")
+        if bool(config["graph"]["reasoning"].get("dynamic_rebuild")):
+            raise ConfigError("Learned queries must declare dynamic_rebuild=false")
+        if (config["graph"]["reasoning"].get("hypothesis_feedback") or
+                config["graph"]["edges"]["feedback"].get("enabled") or
+                config["graph"]["edge_attention"].get("enabled")):
+            raise ConfigError("Learned queries must disable graph feedback and edge attention")
     graph_type = str(require_key(config, "graph.type")).lower()
     evidence_mode = str(config["graph"].get("evidence_mode", "heterogeneous")).lower()
     grounding_mode = str(config["model"]["grounding"].get("mode", "hypothesis_conditioned"))
@@ -812,6 +835,13 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
             validate_hera_ablation_contract(config)
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
+    elif cycle_study_enabled:
+        from src.experiments import validate_hera_cycle_study_contract
+
+        try:
+            validate_hera_cycle_study_contract(config)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
     else:
         if graph_type != "hgt":
             raise ConfigError("graph.type must be hgt for canonical HERA")
@@ -821,13 +851,14 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
             raise ConfigError("model.grounding.mode must be hypothesis_conditioned for canonical HERA")
         if binary_aggregation != "noisy_or":
             raise ConfigError("model.binary.aggregation must be noisy_or")
-    if int(require_key(config, "graph.reasoning.cycles")) != 2:
-        raise ConfigError("Final HERA requires exactly two iterative reasoning cycles")
-    if not bool(require_key(config, "graph.reasoning.dynamic_rebuild")):
-        raise ConfigError("Final HERA requires dynamic graph rebuild between reasoning cycles")
+    if not cycle_study_enabled:
+        if int(require_key(config, "graph.reasoning.cycles")) != 2:
+            raise ConfigError("Final HERA requires exactly two iterative reasoning cycles")
+        if not query_control and not bool(require_key(config, "graph.reasoning.dynamic_rebuild")):
+            raise ConfigError("Final HERA requires dynamic graph rebuild between reasoning cycles")
     if str(require_key(config, "graph.reasoning.hypothesis_edge_reweighting")) != "cosine":
         raise ConfigError("graph.reasoning.hypothesis_edge_reweighting must be cosine")
-    if not bool(require_key(config, "graph.edge_attention.enabled")):
+    if not query_control and not bool(require_key(config, "graph.edge_attention.enabled")):
         raise ConfigError("Final HERA requires reliability-aware edge attention")
     if str(require_key(config, "graph.edge_attention.confidence_gate")) != "direct":
         raise ConfigError("graph.edge_attention.confidence_gate must be direct")

@@ -3,10 +3,14 @@
 
 # Generated experiment artifacts
 /outputs/
+/output/
 /logs/
 /runs/
 /checkpoints/
 /artifacts/
+/paper/
+/tmp/
+/.tmp*/
 /wandb/
 /mlruns/
 /tensorboard/

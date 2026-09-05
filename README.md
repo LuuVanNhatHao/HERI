@@ -1,6 +1,25 @@
 # HERA-DGM
 
-HERA-DGM is governed by the frozen Phase 0 Constitution in `docs/HERA_DGM_CONSTITUTION.md`.
+HERA-DGM is governed by `docs/HERA_DGM_CONSTITUTION.md` and its scientific-v3 amendment.
+
+## Scientific evaluation v3
+
+The current evaluator corrects CF1, includes all samples in grounding, and reports
+original-word truncation coverage. Historical CF1/grounding scores are not
+interchangeable with v3 outputs. Legacy weights can be evaluated explicitly;
+legacy checkpoint-selection state cannot resume into v3 training.
+
+The matched core suite adds B1+noisy-OR and learned-query controls alongside
+static-cycle and full HERA. Results remain pending until validated server runs
+are available.
+
+```bash
+# Prepare 15 matched jobs, without starting GPU training.
+python scripts/run_scientific_study.py
+```
+
+Use the new isolated scientific-v3 manifest for revised paper experiments.
+The older phase/cycle commands below remain available as historical workflows.
 
 ## Final protocol (`hera_final_v2`)
 
@@ -135,6 +154,66 @@ Rerunning the same command resumes an interrupted variant from its latest
 `last.pt`, skips variants with a valid `training_complete.json`, and skips an
 evaluation whose `summary.csv` already exists. Checkpoints are written after
 each epoch, so an interruption in the middle of an epoch repeats that epoch.
+
+## Controlled graph-cycle study
+
+The cycle-depth study is separate from the six component ablations. It holds the
+DGM4 split, HERA modules, backbones, losses, staged full fine-tuning, batch
+size, and threshold protocol fixed while changing only graph pass depth and
+inter-pass reconstruction:
+
+- `single_pass`: one graph pass and no inter-pass rebuild;
+- `two_cycle_static`: two passes over one frozen topology and frozen edge
+  attributes while node states continue to update;
+- `full_hera`: canonical two-pass state-dependent graph reconstruction;
+- `three_cycle_extension`: three-pass state-dependent saturation probe.
+
+Materialize and validate all four complete configurations without loading a
+model or starting CUDA:
+
+```bash
+python scripts/run_hera_cycle_study.py \
+  config/experiments/hera_cycle_study.yaml \
+  --dry-run
+```
+
+Before committing to the three-cycle run, test its exact Stage-B memory path on
+the GPU server using the generated configuration:
+
+```bash
+python scripts/full_ft_capacity_test.py \
+  outputs/hera_cycle_study/three_cycle_extension/configs/train.yaml \
+  --batch-size 16 --batches 2
+```
+
+If that exact test reports OOM, change `micro_batch_size` and
+`gradient_accumulation_steps` once in the suite manifest so the effective batch
+is preserved, then regenerate all four configs. Do not reduce only the
+three-cycle variant, because that would break the matched-protocol control.
+
+Run all variants sequentially, or resume one selected variant:
+
+```bash
+python scripts/run_hera_cycle_study.py \
+  config/experiments/hera_cycle_study.yaml \
+  --prune-last-after-evaluation
+
+python scripts/run_hera_cycle_study.py \
+  config/experiments/hera_cycle_study.yaml \
+  --variants three_cycle_extension
+```
+
+Each variant has an isolated auto-resume root and the canonical 20-epoch
+ceiling with the same early-stopping policy. Cross-variant checkpoint loading is rejected. The
+study result table is written to
+`outputs/hera_cycle_study/cycle_study_summary.csv`; CF1 deltas are computed
+from the measured single-pass row and are never embedded as assumed numbers.
+The router is not rerun between graph passes, so reports must describe this as
+state-dependent graph/evidence reconstruction rather than reliability
+re-estimation.
+On storage-limited servers, `--prune-last-after-evaluation` removes only the
+resume checkpoint after a valid test summary has been written and preserves
+`best.pt`. Without this explicit flag, the runner never deletes checkpoints.
 
 ## Canonical HERA multi-seed runs
 

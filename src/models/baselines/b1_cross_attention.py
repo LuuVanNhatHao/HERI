@@ -12,6 +12,7 @@ from src.models.heads.attribution import AttributionHead
 from src.models.heads.binary import BinaryHead
 from src.models.heads.image_grounding import ImageGroundingHead
 from src.models.heads.text_grounding import TextGroundingHead
+from src.models.heads.noisy_or import StableNoisyOR
 from src.models.outputs import BackboneOutputs, BaselineOutput
 
 from .base import BaselineBackboneMixin, finite_or_fail
@@ -28,6 +29,7 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
         num_heads: int,
         head_hidden_dim: int,
         dropout: float,
+        binary_aggregation: str = "independent_head",
         siglip2: nn.Module | None = None,
         dinov3: nn.Module | None = None,
         deberta: nn.Module | None = None,
@@ -42,7 +44,12 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
             num_heads=num_heads,
             dropout=dropout,
         )
-        self.binary_head = BinaryHead(input_dim=fusion_dim)
+        if binary_aggregation not in {"independent_head", "noisy_or"}:
+            raise ValueError("B1 binary aggregation must be independent_head or noisy_or")
+        self.binary_aggregation = binary_aggregation
+        if binary_aggregation == "independent_head":
+            self.binary_head = BinaryHead(input_dim=fusion_dim)
+        self.noisy_or = StableNoisyOR()
         self.attribution_head = AttributionHead(input_dim=fusion_dim)
         self.image_grounding_head = ImageGroundingHead(
             fusion_dim=fusion_dim,
@@ -72,8 +79,12 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
             deberta_tokens=encoded.deberta.token_features,
             deberta_mask=encoded.deberta.attention_mask,
         )
-        binary_logit = self.binary_head(fused)
         atomic_logits = self.attribution_head(fused)
+        binary_logit = (
+            self.noisy_or(atomic_logits).binary_logit
+            if self.binary_aggregation == "noisy_or"
+            else self.binary_head(fused)
+        )
         image_logits, image_mask, image_boxes, image_patch_boxes = self.image_grounding_head(
             patch_tokens=encoded.dinov3.patch_tokens,
             patch_mask=encoded.dinov3.patch_mask,
@@ -106,6 +117,7 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
             text_grounding_mask=text_mask,
             metadata={
                 "baseline_type": "b1_cross_attention",
+                "binary_aggregation": self.binary_aggregation,
                 "fused_token_count": fused_tokens.shape[1],
                 "fused_valid_tokens": fused_mask.sum(dim=1).detach().cpu().tolist(),
             },

@@ -80,7 +80,7 @@ def create_run_dir(
     seed = int(config["project"]["seed"])
     baseline = str(config["model"]["baseline_type"])
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = output_root / f"{baseline}_seed{seed}_{timestamp}"
+    run_dir = output_root / str(config["project"].get("run_id") or f"{baseline}_seed{seed}_{timestamp}")
     for subdir in ("checkpoints", "metrics", "logs", "thresholds", "predictions"):
         (run_dir / subdir).mkdir(parents=True, exist_ok=False)
     return run_dir
@@ -355,7 +355,7 @@ class BaselineTrainer:
     ) -> torch.optim.lr_scheduler.LRScheduler | None:
         if crosses_stage_boundary:
             restore_checkpoint(checkpoint=checkpoint, model=self.model)
-            loaded = load_compatible_optimizer_state(optimizer, checkpoint["optimizer"])
+            load_compatible_optimizer_state(optimizer, checkpoint["optimizer"])
             remaining_steps = max(
                 1,
                 (total_epochs - resume_checkpoint_epoch) * optimizer_steps_per_epoch,
@@ -641,7 +641,7 @@ class BaselineTrainer:
             best_path = self.state.best_checkpoint
             if best_path is None:
                 raise RuntimeError("Best checkpoint path was not initialized")
-            save_checkpoint(
+            best_checkpoint_id = save_checkpoint(
                 path=best_path,
                 model=self.model,
                 optimizer=optimizer,
@@ -659,6 +659,7 @@ class BaselineTrainer:
                     {
                         **self.state.thresholds.as_dict(),
                         "checkpoint_path": str(best_path),
+                        "checkpoint_id": best_checkpoint_id,
                         "epoch": self.state.epoch,
                         "selection_metric": primary,
                         "selection_metric_value": self.state.best_metric,

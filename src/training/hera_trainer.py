@@ -401,6 +401,10 @@ class HERATrainer:
             "stop_reason": str(stop_reason),
             "best_checkpoint": str(best_checkpoint),
             "ablation_variant": self.model.ablation_variant,
+            "cycle_study_variant": getattr(self.model, "cycle_study_variant", None),
+            "cycle_study_protocol_id": getattr(
+                self.model, "cycle_study_protocol_id", None
+            ),
         }
         destination = self.run_dir / "training_complete.json"
         temporary = self.run_dir / ".training_complete.json.tmp"
@@ -668,7 +672,7 @@ class HERATrainer:
         initial_best_written = False
         if improved and keep_best and self.state.best_checkpoint is not None:
             if not self.state.best_checkpoint.is_file():
-                save_checkpoint(
+                best_checkpoint_id = save_checkpoint(
                     path=self.state.best_checkpoint,
                     model=self.model,
                     optimizer=optimizer,
@@ -737,7 +741,7 @@ class HERATrainer:
             if best_path is None:
                 raise RuntimeError("Best checkpoint path was not initialized")
             if not initial_best_written:
-                save_checkpoint(
+                best_checkpoint_id = save_checkpoint(
                     path=best_path,
                     model=self.model,
                     optimizer=optimizer,
@@ -755,6 +759,7 @@ class HERATrainer:
                     {
                         **self.state.thresholds.as_dict(),
                         "checkpoint_path": str(best_path),
+                        "checkpoint_id": best_checkpoint_id,
                         "epoch": self.state.epoch,
                         "selection_metric": primary,
                         "selection_metric_value": self.state.best_metric,

@@ -98,10 +98,18 @@ def _is_explicit_artifact_path(value: Any) -> bool:
     return not any(marker in str(value) for marker in _MISSING_PATH_MARKERS)
 
 
-def _load_thresholds(path: Path, *, checkpoint_path: Path) -> Thresholds:
+def _load_thresholds(path: Path, *, checkpoint_path: Path, checkpoint: Mapping[str, Any] | None = None) -> Thresholds:
     data = json.loads(path.read_text(encoding="utf-8"))
+    bound_by_identity = checkpoint is not None and checkpoint.get("checkpoint_id") is not None
+    if bound_by_identity:
+        if data.get("checkpoint_id") != checkpoint["checkpoint_id"]:
+            raise ValueError("Threshold checkpoint identity mismatch; regenerate validation thresholds for these weights")
+        if data.get("epoch") != checkpoint.get("epoch"):
+            raise ValueError("Threshold checkpoint epoch mismatch")
+        if any(data.get(key) != value for key, value in checkpoint.get("thresholds", {}).items()):
+            raise ValueError("Threshold values disagree with checkpoint's validation thresholds")
     expected_checkpoint = data.get("checkpoint_path")
-    if expected_checkpoint is not None:
+    if expected_checkpoint is not None and not bound_by_identity:
         expected = Path(str(expected_checkpoint))
         if expected.exists() and checkpoint_path.exists():
             mismatch = expected.resolve() != checkpoint_path.resolve()
@@ -163,6 +171,7 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
     thresholds = _load_thresholds(
         thresholds_path,
         checkpoint_path=checkpoint_path,
+        checkpoint=checkpoint,
     )
     bundle = run_inference(
         model=model,
@@ -185,6 +194,10 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
         path=run_dir / "predictions" / f"{config['evaluation']['split']}_predictions.csv",
     )
     run_info = {
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "checkpoint_evaluation_protocol": checkpoint.get("evaluation_protocol", "legacy"),
+        "scientific_study_id": config.get("scientific_study", {}).get("protocol_id"),
+        "scientific_variant": config.get("scientific_study", {}).get("variant"),
         "run_id": run_id,
         "model_name": config["project"]["name"],
         "architecture_version": config["project"]["architecture_version"],

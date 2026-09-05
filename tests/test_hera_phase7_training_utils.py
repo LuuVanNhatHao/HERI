@@ -308,7 +308,7 @@ def test_legacy_early_stopping_state_is_recovered_from_history(tmp_path: Path) -
     assert bad_epochs == 2
 
 
-def test_legacy_epoch_10_checkpoint_extends_to_20_without_lr_jump() -> None:
+def test_current_protocol_legacy_scheduler_extends_to_20_without_lr_jump() -> None:
     trainer = HERATrainer.__new__(HERATrainer)
     trainer.config = {
         "scheduler": {
@@ -325,6 +325,7 @@ def test_legacy_epoch_10_checkpoint_extends_to_20_without_lr_jump() -> None:
     checkpoint_optimizer.param_groups[0]["lr"] = 3e-5
     checkpoint_optimizer.param_groups[0]["initial_lr"] = 1e-4
     checkpoint = {
+        "evaluation_protocol": "hera_scientific_v3",
         "model": trainer.model.state_dict(),
         "optimizer": checkpoint_optimizer.state_dict(),
         "scheduler": None,

@@ -44,10 +44,19 @@ class BaselineMultitaskLoss:
         self.lambda_text = float(weights["text_grounding"])
 
     def __call__(self, output: BaselineOutput, batch: Mapping[str, torch.Tensor]) -> BaselineLossResult:
-        binary = F.binary_cross_entropy_with_logits(
-            output.binary_logit,
-            batch["binary_target"].to(output.binary_logit.dtype),
-        )
+        if output.metadata.get("binary_aggregation") == "noisy_or":
+            from src.losses.hera_components import target_consistent_noisy_or_loss
+
+            binary = target_consistent_noisy_or_loss(
+                output.atomic_logits,
+                batch["atomic_target"].to(output.atomic_logits),
+                batch["binary_target"].to(output.binary_logit),
+            )
+        else:
+            binary = F.binary_cross_entropy_with_logits(
+                output.binary_logit,
+                batch["binary_target"].to(output.binary_logit.dtype),
+            )
         attribution = F.binary_cross_entropy_with_logits(
             output.atomic_logits,
             batch["atomic_target"].to(output.atomic_logits.dtype),

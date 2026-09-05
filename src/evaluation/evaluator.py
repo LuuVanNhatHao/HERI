@@ -21,6 +21,7 @@ from src.metrics.reports import (
 )
 from src.thresholding.tuner import Thresholds
 from src.training.precision import PrecisionManager
+from src.evaluation.protocol import protocol_metadata
 from src.evaluation.hypothesis_grounding import (
     route_image_grounding_boxes,
     route_text_grounding_probabilities,
@@ -43,6 +44,7 @@ class PredictionBundle:
     atomic_targets: list[list[float]] = field(default_factory=list)
     atomic_scores: list[list[float]] = field(default_factory=list)
     image_ious: list[float] = field(default_factory=list)
+    image_all_ious: list[float] = field(default_factory=list)
     image_grounding_pred_indices: list[int | None] = field(default_factory=list)
     image_grounding_pred_ious: list[float | None] = field(default_factory=list)
     image_grounding_pred_boxes: list[str] = field(default_factory=list)
@@ -55,6 +57,20 @@ class PredictionBundle:
     text_tp: int = 0
     text_fp: int = 0
     text_fn: int = 0
+    text_token_tp: int = 0
+    text_token_fp: int = 0
+    text_token_fn: int = 0
+    text_positive_tp: int = 0
+    text_positive_fp: int = 0
+    text_positive_fn: int = 0
+    text_total_words: int = 0
+    text_visible_words: int = 0
+    text_total_positive_words: int = 0
+    text_unseen_positive_words: int = 0
+    text_coverage_complete: bool = True
+    text_token_count: int = 0
+    text_sample_counts: list[dict[str, int]] = field(default_factory=list)
+    text_word_probabilities: list[str] = field(default_factory=list)
     loss_sums: dict[str, float] = field(default_factory=dict)
     batches: int = 0
 
@@ -157,16 +173,19 @@ def _accumulate_image_ious(bundle: PredictionBundle, output: Any, batch: Mapping
     predicted_boxes = predicted_boxes.detach().cpu()
     route_weights = route_weights.detach().cpu()
     for idx in range(predicted_boxes.shape[0]):
-        if not bool(applies[idx]):
-            bundle.image_grounding_pred_indices.append(None)
-            bundle.image_grounding_pred_ious.append(None)
-            bundle.image_grounding_pred_boxes.append("")
-            continue
         route_index = int(route_weights[idx].argmax().item())
         bundle.image_grounding_pred_indices.append(route_index)
         bundle.image_grounding_pred_boxes.append(json.dumps(predicted_boxes[idx].tolist()))
+        if not bool(applies[idx]):
+            # Match the released evaluator's empty-target convention. Never use
+            # GT subtype to zero a prediction or choose a grounding head.
+            pred_iou = float(bool((predicted_boxes[idx] < 1e-4).all()))
+            bundle.image_all_ious.append(pred_iou)
+            bundle.image_grounding_pred_ious.append(pred_iou)
+            continue
         pred_iou = iou(predicted_boxes[idx].tolist(), normalized_targets[idx].tolist())
         bundle.image_ious.append(pred_iou)
+        bundle.image_all_ious.append(pred_iou)
         bundle.image_grounding_pred_ious.append(pred_iou)
 
 
@@ -187,36 +206,63 @@ def _accumulate_text_counts(bundle: PredictionBundle, output: Any, batch: Mappin
     else:
         probs = torch.sigmoid(logits)
     for sample_idx in range(logits.shape[0]):
-        if not bool(applies[sample_idx]):
-            bundle.text_target_word_ids.append("")
-            bundle.text_pred_word_ids.append("")
-            continue
         sample_probs = probs[sample_idx]
         valid = masks[sample_idx] & (targets[sample_idx] >= 0)
-        if not bool(valid.any()):
-            bundle.text_target_word_ids.append("")
-            bundle.text_pred_word_ids.append("")
-            continue
-        target_words: list[int] = []
-        pred_words: list[int] = []
-        sample_word_ids = sorted(
-            int(word_id)
-            for word_id in torch.unique(word_ids[sample_idx][valid]).tolist()
-            if int(word_id) >= 0
-        )
-        for word_id in sample_word_ids:
+        token_true = targets[sample_idx][valid] == 1
+        token_pred = sample_probs[valid] >= 0.5
+        token_tp = int((token_true & token_pred).sum())
+        token_fp = int((~token_true & token_pred).sum())
+        token_fn = int((token_true & ~token_pred).sum())
+        bundle.text_token_tp += token_tp
+        bundle.text_token_fp += token_fp
+        bundle.text_token_fn += token_fn
+        bundle.text_token_count += int(valid.sum())
+        visible_ids = {
+            int(v) for v in word_ids[sample_idx][valid].unique().tolist() if int(v) >= 0
+        }
+        word_probs = {}
+        visible_targets = set()
+        for word_id in sorted(visible_ids):
             word_mask = valid & (word_ids[sample_idx] == word_id)
-            y_true = int((targets[sample_idx][word_mask] == 1).any().item())
-            y_pred = int((sample_probs[word_mask].max() >= 0.5).item())
-            if y_true:
-                target_words.append(word_id)
-            if y_pred:
-                pred_words.append(word_id)
-            bundle.text_tp += int(y_true == 1 and y_pred == 1)
-            bundle.text_fp += int(y_true == 0 and y_pred == 1)
-            bundle.text_fn += int(y_true == 1 and y_pred == 0)
-        bundle.text_target_word_ids.append(json.dumps(target_words))
-        bundle.text_pred_word_ids.append(json.dumps(pred_words))
+            word_probs[word_id] = float(sample_probs[word_mask].max())
+            if bool((targets[sample_idx][word_mask] == 1).any()):
+                visible_targets.add(word_id)
+        if "fake_text_pos" in batch and "words" in batch:
+            positions = batch["fake_text_pos"][sample_idx]
+            target_words = {int(v) for v in positions.tolist() if int(v) >= 0}
+            word_count = len(batch["words"][sample_idx])
+            if any(v >= word_count for v in target_words | visible_ids):
+                raise ValueError("Grounding word IDs exceed the original word sequence")
+        else:
+            # Synthetic/legacy batches cannot establish truncation coverage.
+            bundle.text_coverage_complete = False
+            target_words = visible_targets
+            word_count = len(visible_ids)
+        pred_words = {word_id for word_id, p in word_probs.items() if p >= 0.5}
+        tp = len(target_words & pred_words)
+        fp = len(pred_words - target_words)
+        fn = len(target_words - pred_words)
+        bundle.text_tp += tp
+        bundle.text_fp += fp
+        bundle.text_fn += fn
+        if bool(applies[sample_idx]):
+            bundle.text_positive_tp += len(visible_targets & pred_words)
+            bundle.text_positive_fp += len(pred_words - visible_targets)
+            bundle.text_positive_fn += len(visible_targets - pred_words)
+        unseen_positive = len(target_words - visible_ids)
+        bundle.text_total_words += word_count
+        bundle.text_visible_words += len(visible_ids)
+        bundle.text_total_positive_words += len(target_words)
+        bundle.text_unseen_positive_words += unseen_positive
+        bundle.text_target_word_ids.append(json.dumps(sorted(target_words)))
+        bundle.text_pred_word_ids.append(json.dumps(sorted(pred_words)))
+        bundle.text_word_probabilities.append(json.dumps(word_probs, sort_keys=True))
+        bundle.text_sample_counts.append({
+            "word_tp": tp, "word_fp": fp, "word_fn": fn,
+            "token_tp": token_tp, "token_fp": token_fp, "token_fn": token_fn,
+            "words": word_count, "visible_words": len(visible_ids),
+            "unseen_positive_words": unseen_positive,
+        })
 
 
 def _router_sample_diagnostics(output: Any, batch_size: int) -> list[str]:
@@ -280,13 +326,33 @@ def compute_metrics_and_reports(
     binary_pred = (binary_scores >= thresholds.binary).astype(int)
     atomic_pred = (atomic_scores >= np.asarray(thresholds.atomic).reshape(1, -1)).astype(int)
 
-    image_metrics = _image_metrics_from_ious(bundle.image_ious)
-    text_metrics = _text_metrics_from_counts(bundle.text_tp, bundle.text_fp, bundle.text_fn)
+    image_metrics = _image_metrics_from_ious(bundle.image_all_ious)
+    text_metrics = _text_metrics_from_counts(bundle.text_token_tp, bundle.text_token_fp, bundle.text_token_fn)
+    word_metrics = _text_metrics_from_counts(bundle.text_tp, bundle.text_fp, bundle.text_fn)
+    positive_text = _text_metrics_from_counts(bundle.text_positive_tp, bundle.text_positive_fp, bundle.text_positive_fn)
+    fixed_attr = attribution_metrics(atomic_targets, atomic_scores, thresholds=np.full(4, 0.5))
+    fixed_binary = binary_detection_metrics(binary_targets, binary_scores, threshold=0.5)
     metrics = {
+        **protocol_metadata(),
         **binary_detection_metrics(binary_targets, binary_scores, threshold=thresholds.binary),
         **attribution_metrics(atomic_targets, atomic_scores, thresholds=np.asarray(thresholds.atomic)),
         **image_metrics,
         **text_metrics,
+        **{f"{key}_fixed": value for key, value in fixed_attr.items() if key != "map"},
+        "acc_fixed": fixed_binary["acc"],
+        **{key.replace("text_", "text_word_"): value for key, value in word_metrics.items()},
+        **{f"{key}_positive_only": value for key, value in positive_text.items()},
+        **{f"{key}_positive_only": value for key, value in _image_metrics_from_ious(bundle.image_ious).items()},
+        "sample_count": len(bundle.ids),
+        "image_sample_count": len(bundle.image_all_ious),
+        "image_positive_sample_count": len(bundle.image_ious),
+        "text_positive_sample_count": sum(bundle.has_text_manipulation),
+        "text_token_count": bundle.text_token_count,
+        "text_word_count": bundle.text_total_words,
+        "text_visible_word_count": bundle.text_visible_words,
+        "text_positive_word_count": bundle.text_total_positive_words,
+        "text_unseen_positive_word_count": bundle.text_unseen_positive_words,
+        "text_coverage_complete": bundle.text_coverage_complete,
         "losses": bundle.mean_losses(),
     }
     return {
@@ -306,8 +372,8 @@ def _image_metrics_from_ious(values: list[float]) -> dict[str, float | None]:
     arr = np.asarray(values, dtype=float)
     return {
         "image_mean_iou": float(arr.mean()),
-        "image_iou50": float((arr >= 0.5).mean()),
-        "image_iou75": float((arr >= 0.75).mean()),
+        "image_iou50": float((arr > 0.5).mean()),
+        "image_iou75": float((arr > 0.75).mean()),
     }
 
 

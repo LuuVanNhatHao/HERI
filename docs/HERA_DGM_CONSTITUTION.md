@@ -7,6 +7,20 @@
 > grounding is routed only by predicted atomic probabilities; edge confidence
 > is part of HGT attention/messages; and canonical reasoning uses exactly two
 > cycles with a target-independent graph rebuild.
+> **Scientific-v3 amendment.** For corrected-protocol experiments, this
+> amendment supersedes legacy metric and experiment rules below. CF1 means the
+> harmonic mean of class-mean precision and recall; macro-F1 is a separate field.
+> Fixed-0.5 validation CF1 selects checkpoints in the scientific suite. Grounding
+> reports all samples, explicit positive-only diagnostics, and original-word
+> truncation coverage. Training labels may enter atomic loss, the target-consistent
+> noisy-OR gradient rule, and applicable grounding losses, but never inference
+> evidence selection/graph routing. Router scores are computed once; dense raw
+> stores remain available to grounding. Local-support consistency is not causal
+> faithfulness. Registered learned-query and B1+noisy-OR controls are authorized
+> experimental alternatives, not canonical architecture changes. The scientific
+> suite matches 20 epochs and seeds 7/21/101 with early stopping disabled; R1 scores
+> are archival until corrected-protocol evaluation.
+
 ## Scientific & Engineering Constitution
 
 **Project:** HERA-DGM  
