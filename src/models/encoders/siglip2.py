@@ -40,6 +40,17 @@ class SigLIP2Encoder(nn.Module):
         self.image_std = tuple(float(value) for value in image_std)
         self.max_length = int(max_length)
         self.model_name = model_name
+        if self.max_length <= 0:
+            raise ValueError("SigLIP2 text_max_length must be positive")
+        text_capacity = _text_position_capacity(model)
+        if text_capacity is not None and self.max_length > text_capacity:
+            raise ValueError(
+                f"Configured SigLIP2 text_max_length={self.max_length} exceeds "
+                f"{model_name}'s max_position_embeddings={text_capacity}. "
+                "Keep SigLIP2 text_max_length within the pretrained text tower's "
+                "capacity; tokenizer.max_length may remain larger for the separate "
+                "text-grounding encoder."
+            )
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "SigLIP2Encoder":
@@ -191,6 +202,30 @@ def _batch_word_ids(encoding: Any, *, batch_size: int, device: torch.device) -> 
             values = encoding.word_ids()
         rows.append([-1 if value is None else int(value) for value in values])
     return torch.tensor(rows, dtype=torch.long, device=device)
+
+
+def _text_position_capacity(model: nn.Module) -> int | None:
+    """Return the pretrained text tower's positional capacity when advertised."""
+
+    config = getattr(model, "config", None)
+    if config is None:
+        return None
+    text_config = (
+        config.get("text_config")
+        if isinstance(config, Mapping)
+        else getattr(config, "text_config", None)
+    )
+    if text_config is None:
+        return None
+    capacity = (
+        text_config.get("max_position_embeddings")
+        if isinstance(text_config, Mapping)
+        else getattr(text_config, "max_position_embeddings", None)
+    )
+    if capacity is None:
+        return None
+    parsed = int(capacity)
+    return parsed if parsed > 0 else None
 
 
 def _extract_optional_tensor(outputs: Any, name: str) -> torch.Tensor | None:

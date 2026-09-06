@@ -27,7 +27,9 @@ tokenizer:
 
 backbones:
   siglip2:
-    text_max_length: 128
+    # SigLIP2 has 64 pretrained text positions. DeBERTa retains 128 tokens for
+    # the separate SAMM text-grounding path.
+    text_max_length: 64
 
 model:
   hypotheses:

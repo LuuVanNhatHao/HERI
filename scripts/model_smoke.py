@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,8 @@ def main() -> int:
     inspect_batches = int(config["smoke"]["inspect_batches"])
     model.train(backward)
     optimizer = None
-    iterator = tqdm(loader, total=min(inspect_batches, len(loader)), desc="Model smoke")
+    total = min(inspect_batches, len(loader))
+    iterator = tqdm(islice(loader, total), total=total, desc="Model smoke")
     for batch_index, raw_batch in enumerate(iterator, start=1):
         batch = move_batch_to_device(raw_batch, device)
         with precision.autocast():
@@ -80,8 +82,6 @@ def main() -> int:
             print(f"peak_vram_bytes: {torch.cuda.max_memory_allocated()}")
         if not torch.isfinite(losses.total):
             raise FloatingPointError("Non-finite model smoke loss")
-        if batch_index >= inspect_batches:
-            break
     return 0
 
 

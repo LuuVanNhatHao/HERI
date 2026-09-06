@@ -28,7 +28,7 @@ tokenizer:
 
 backbones:
   siglip2:
-    text_max_length: 128
+    text_max_length: 64
 
 model:
   hypotheses:

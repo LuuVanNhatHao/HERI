@@ -27,7 +27,7 @@ tokenizer:
 
 backbones:
   siglip2:
-    text_max_length: 128
+    text_max_length: 64
 
 model:
   hypotheses:
@@ -38,6 +38,7 @@ model:
 smoke:
   max_samples: 3
   samples_per_class: 1
+  inspect_batches: 3
 
 output:
   root: outputs/samm/baseline_b1_smoke

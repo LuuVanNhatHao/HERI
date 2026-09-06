@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -61,15 +62,14 @@ def main() -> int:
     inspect_batches = int(config["smoke"]["inspect_batches"])
     records: list[dict[str, Any]] = []
     start = time.perf_counter()
+    total = min(inspect_batches, len(loader))
     iterator = tqdm(
-        loader,
-        total=min(inspect_batches, len(loader)),
+        islice(loader, total),
+        total=total,
         desc="HERA smoke",
         disable=not bool(config["progress"]["enabled"]),
     )
     for batch_index, raw_batch in enumerate(iterator, start=1):
-        if batch_index > inspect_batches:
-            break
         batch = move_batch_to_device(raw_batch, device)
         with torch.set_grad_enabled(backward):
             with precision.autocast():

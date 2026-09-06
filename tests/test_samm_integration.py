@@ -203,13 +203,19 @@ def test_all_samm_configs_resolve_and_validate() -> None:
         ("config/evaluate_samm_hera.yaml", "evaluate"),
         ("config/smoke_samm_hera.yaml", "smoke"),
     ):
-        validate_hera_config(load_yaml_config(path), mode=mode)
+        config = load_yaml_config(path)
+        assert config["tokenizer"]["max_length"] == 128
+        assert config["backbones"]["siglip2"]["text_max_length"] == 64
+        validate_hera_config(config, mode=mode)
     for path, mode in (
         ("config/train_samm_baseline_b1.yaml", "train"),
         ("config/evaluate_samm_baseline_b1.yaml", "evaluate"),
         ("config/smoke_samm_baseline_b1.yaml", "smoke"),
     ):
-        validate_baseline_config(load_yaml_config(path), mode=mode)
+        config = load_yaml_config(path)
+        assert config["tokenizer"]["max_length"] == 128
+        assert config["backbones"]["siglip2"]["text_max_length"] == 64
+        validate_baseline_config(config, mode=mode)
 
 
 def test_samm_key_ablation_suite_materializes_only_prespecified_variants(
