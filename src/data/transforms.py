@@ -71,11 +71,20 @@ def preprocess_image(
     *,
     target_size: int,
     fill: int = 0,
+    geometry_size: tuple[int, int] | None = None,
 ) -> tuple[torch.Tensor, ImageTransformMeta]:
-    """Convert an image to RGB, resize with padding, and return CHW tensor."""
+    """Convert an image to RGB, resize with padding, and return CHW tensor.
+
+    ``geometry_size`` preserves the original coordinate system when a JPEG
+    decoder draft has already reduced the in-memory image.  This is useful for
+    very large SAMM files while keeping bounding-box transforms exact.
+    """
 
     rgb = image.convert("RGB")
-    meta = compute_resize_padding(*rgb.size, target_size=target_size)
+    meta = compute_resize_padding(
+        *(geometry_size if geometry_size is not None else rgb.size),
+        target_size=target_size,
+    )
     resized = rgb.resize((meta.resized_width, meta.resized_height), Image.Resampling.BICUBIC)
     canvas = Image.new("RGB", (target_size, target_size), color=(fill, fill, fill))
     canvas.paste(resized, (meta.pad_left, meta.pad_top))

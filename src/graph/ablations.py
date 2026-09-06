@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import torch
 from torch import nn
@@ -23,7 +23,8 @@ class GATv2GraphBlock(nn.Module):
     relation-specific Q/K/V projections.
     """
 
-    def __init__(self, *, hidden_dim: int, heads: int, dropout: float) -> None:
+    def __init__(self, *, hidden_dim: int, heads: int, dropout: float,
+                 edge_types: Sequence[EdgeType] = CANONICAL_EDGE_TYPES) -> None:
         super().__init__()
         try:
             from torch_geometric.nn import GATv2Conv
@@ -40,10 +41,11 @@ class GATv2GraphBlock(nn.Module):
             edge_dim=hidden_dim,
             add_self_loops=True,
         )
+        self.edge_types = tuple(edge_types)
         self.node_type_embeddings = nn.Parameter(torch.empty(len(NODE_TYPES), hidden_dim))
-        self.relation_embeddings = nn.Parameter(torch.empty(len(CANONICAL_EDGE_TYPES), hidden_dim))
+        self.relation_embeddings = nn.Parameter(torch.empty(len(self.edge_types), hidden_dim))
         self.edge_attr_encoders = nn.ModuleList(
-            [nn.Linear(2, hidden_dim, bias=False) for _ in CANONICAL_EDGE_TYPES]
+            [nn.Linear(2, hidden_dim, bias=False) for _ in self.edge_types]
         )
         self.dropout = nn.Dropout(float(dropout))
         self.norms = nn.ModuleDict({node_type: nn.LayerNorm(hidden_dim) for node_type in NODE_TYPES})
@@ -67,7 +69,7 @@ class GATv2GraphBlock(nn.Module):
 
         global_edges: list[torch.Tensor] = []
         encoded_attrs: list[torch.Tensor] = []
-        for relation_index, edge_type in enumerate(CANONICAL_EDGE_TYPES):
+        for relation_index, edge_type in enumerate(self.edge_types):
             indices = edge_index_dict[edge_type]
             if indices.shape[1] == 0:
                 continue
@@ -105,11 +107,13 @@ class GATv2GraphBlock(nn.Module):
 class GATv2GraphEncoder(nn.Module):
     """Stack of production GATv2 blocks with the HGT-compatible interface."""
 
-    def __init__(self, *, hidden_dim: int, layers: int, heads: int, dropout: float) -> None:
+    def __init__(self, *, hidden_dim: int, layers: int, heads: int, dropout: float,
+                 edge_types: Sequence[EdgeType] = CANONICAL_EDGE_TYPES) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
             [
-                GATv2GraphBlock(hidden_dim=hidden_dim, heads=heads, dropout=dropout)
+                GATv2GraphBlock(hidden_dim=hidden_dim, heads=heads, dropout=dropout,
+                                edge_types=edge_types)
                 for _ in range(int(layers))
             ]
         )
@@ -203,8 +207,10 @@ class _CoarseHGTBlock(nn.Module):
 class HomogeneousEvidenceHGTEncoder(nn.Module):
     """Collapse five evidence families into one type before HGT reasoning."""
 
-    def __init__(self, *, hidden_dim: int, layers: int, heads: int, dropout: float) -> None:
+    def __init__(self, *, hidden_dim: int, layers: int, heads: int, dropout: float,
+                 edge_types: Sequence[EdgeType] = CANONICAL_EDGE_TYPES) -> None:
         super().__init__()
+        self.edge_types = tuple(edge_types)
         self.layers = nn.ModuleList(
             [
                 _CoarseHGTBlock(hidden_dim=hidden_dim, heads=heads, dropout=dropout)
@@ -219,7 +225,7 @@ class HomogeneousEvidenceHGTEncoder(nn.Module):
         edge_attr_dict: Mapping[EdgeType, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
         coarse_x, coarse_edges, coarse_attrs, layout = _collapse_evidence_graph(
-            x_dict, edge_index_dict, edge_attr_dict
+            x_dict, edge_index_dict, edge_attr_dict, edge_types=self.edge_types
         )
         current = coarse_x
         for layer in self.layers:
@@ -245,6 +251,8 @@ def _collapse_evidence_graph(
     x_dict: Mapping[str, torch.Tensor],
     edge_index_dict: Mapping[EdgeType, torch.Tensor],
     edge_attr_dict: Mapping[EdgeType, torch.Tensor],
+    *,
+    edge_types: Sequence[EdgeType] = CANONICAL_EDGE_TYPES,
 ) -> tuple[
     dict[str, torch.Tensor],
     dict[EdgeType, torch.Tensor],
@@ -269,7 +277,7 @@ def _collapse_evidence_graph(
     grouped_attrs: dict[EdgeType, list[torch.Tensor]] = {
         edge_type: [] for edge_type in _COARSE_EDGE_TYPES
     }
-    for edge_type in CANONICAL_EDGE_TYPES:
+    for edge_type in edge_types:
         indices = edge_index_dict[edge_type]
         src_type, _, dst_type = edge_type
         if src_type == HYPOTHESIS:

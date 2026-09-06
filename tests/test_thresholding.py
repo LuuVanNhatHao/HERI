@@ -1,6 +1,8 @@
 import numpy as np
 
-from src.thresholding.tuner import tune_thresholds
+import pytest
+
+from src.thresholding.tuner import Thresholds, default_thresholds_for_hypotheses, tune_thresholds
 
 
 def test_threshold_tuning_uses_validation_arrays() -> None:
@@ -18,3 +20,11 @@ def test_threshold_tuning_uses_validation_arrays() -> None:
     )
     assert 0.1 <= thresholds.binary <= 0.9
     assert len(thresholds.atomic) == 4
+
+
+def test_thresholds_are_ontology_aligned() -> None:
+    thresholds = default_thresholds_for_hypotheses(["SWAP", "ATTRIBUTE"])
+    assert thresholds.atomic == (0.5, 0.5)
+    assert thresholds.hypothesis_names == ("SWAP", "ATTRIBUTE")
+    with pytest.raises(ValueError, match="equal length"):
+        Thresholds(binary=0.5, atomic=(0.5,), hypothesis_names=("SWAP", "ATTRIBUTE"))

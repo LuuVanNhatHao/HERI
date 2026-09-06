@@ -72,7 +72,7 @@ class HERAMultitaskLoss:
         atomic_target = batch["atomic_target"].to(device=output.atomic_logits.device, dtype=output.atomic_logits.dtype)
         binary_target = batch["binary_target"].to(device=output.binary_logit.device, dtype=output.binary_logit.dtype)
         if atomic_target.shape != output.atomic_logits.shape:
-            raise ValueError("atomic_target must align with atomic_logits [B,4]")
+            raise ValueError("atomic_target must align with atomic_logits [B,K]")
         if binary_target.shape != output.binary_logit.shape:
             raise ValueError("binary_target must align with derived binary_logit [B]")
 
@@ -137,20 +137,24 @@ def _optional_scalar_loss(output: HERADecisionOutput, name: str) -> torch.Tensor
     return output.atomic_logits.sum() * 0.0
 
 
-def image_grounding_applicability(atomic_target: torch.Tensor) -> torch.Tensor:
-    """Return [B,2] applicability: column 0=FS, column 1=FA."""
+def image_grounding_applicability(
+    atomic_target: torch.Tensor, indices: tuple[int, ...] = (0, 1)
+) -> torch.Tensor:
+    """Return applicability for the configured image-grounding hypotheses."""
 
-    if atomic_target.ndim != 2 or atomic_target.shape[1] != 4:
-        raise ValueError("atomic_target must be [B,4]")
-    return atomic_target[:, :2] > 0.5
+    if atomic_target.ndim != 2 or not indices or max(indices) >= atomic_target.shape[1]:
+        raise ValueError("atomic_target or image hypothesis indices are invalid")
+    return atomic_target[:, list(indices)] > 0.5
 
 
-def text_grounding_applicability(atomic_target: torch.Tensor) -> torch.Tensor:
-    """Return [B,2] applicability: column 0=TS, column 1=TA."""
+def text_grounding_applicability(
+    atomic_target: torch.Tensor, indices: tuple[int, ...] = (2, 3)
+) -> torch.Tensor:
+    """Return applicability for the configured text-grounding hypotheses."""
 
-    if atomic_target.ndim != 2 or atomic_target.shape[1] != 4:
-        raise ValueError("atomic_target must be [B,4]")
-    return atomic_target[:, 2:4] > 0.5
+    if atomic_target.ndim != 2 or not indices or max(indices) >= atomic_target.shape[1]:
+        raise ValueError("atomic_target or text hypothesis indices are invalid")
+    return atomic_target[:, list(indices)] > 0.5
 
 
 def hypothesis_image_grounding_loss(
@@ -169,12 +173,20 @@ def hypothesis_image_grounding_loss(
     target_boxes = normalized_target_boxes(batch, device=logits.device, dtype=logits.dtype)
     if atomic_target is None:
         atomic_target = batch["atomic_target"].to(device=logits.device, dtype=logits.dtype)
-    applies = image_grounding_applicability(atomic_target.to(device=logits.device))
+    image_indices = tuple(
+        int(value) for value in output.metadata.get("image_hypothesis_indices", (0, 1))
+    )
+    applies = image_grounding_applicability(
+        atomic_target.to(device=logits.device), image_indices
+    )
+    annotation_available = batch.get("image_grounding_available")
+    if annotation_available is not None:
+        applies = applies & annotation_available.to(logits.device).to(torch.bool).unsqueeze(1)
     if patch_mask.shape != logits.shape[0:1] + logits.shape[2:3]:
         raise ValueError("image grounding mask shape mismatch")
 
     losses: list[torch.Tensor] = []
-    for head_index in range(2):
+    for head_index in range(logits.shape[1]):
         valid_rows = applies[:, head_index]
         if not bool(valid_rows.any()):
             continue
@@ -211,10 +223,18 @@ def hypothesis_text_grounding_loss(
         atomic_target = batch["atomic_target"].to(device=logits.device, dtype=logits.dtype)
     if target.shape != (logits.shape[0], logits.shape[-1]):
         raise ValueError("text_grounding_target must align with full text grounding logits [B,N_full_text]")
-    applies = text_grounding_applicability(atomic_target.to(device=logits.device))
+    text_indices = tuple(
+        int(value) for value in output.metadata.get("text_hypothesis_indices", (2, 3))
+    )
+    applies = text_grounding_applicability(
+        atomic_target.to(device=logits.device), text_indices
+    )
+    annotation_available = batch.get("text_grounding_available")
+    if annotation_available is not None:
+        applies = applies & annotation_available.to(logits.device).to(torch.bool).unsqueeze(1)
 
     losses: list[torch.Tensor] = []
-    for head_index in range(2):
+    for head_index in range(logits.shape[1]):
         valid = applies[:, head_index].unsqueeze(1) & text_mask & (target >= 0)
         if not bool(valid.any()):
             continue
@@ -246,13 +266,13 @@ def evidence_sufficiency_loss(output: HERADecisionOutput) -> torch.Tensor:
         )
         support = torch.cat([image_support, text_support], dim=1)
     if support.shape != atomic.shape:
-        raise ValueError("Evidence support must align with atomic probabilities [B,4]")
+        raise ValueError("Evidence support must align with atomic probabilities [B,K]")
     return torch.relu(atomic - support).mean()
 
 
 def _masked_max_probabilities(probabilities: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    if probabilities.ndim != 3 or probabilities.shape[1] != 2:
-        raise ValueError("Hypothesis-conditioned grounding probabilities must be [B,2,N]")
+    if probabilities.ndim != 3 or probabilities.shape[1] < 1:
+        raise ValueError("Hypothesis-conditioned grounding probabilities must be [B,K_grounding,N]")
     if mask.shape != (probabilities.shape[0], probabilities.shape[-1]):
         raise ValueError("Grounding mask must be [B,N]")
     masked = probabilities.masked_fill(~mask.to(torch.bool).unsqueeze(1), 0.0)

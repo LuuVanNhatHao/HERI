@@ -9,25 +9,50 @@ import numpy as np
 from sklearn.metrics import f1_score
 from tqdm.auto import tqdm
 
+from src.graph.schema import HYPOTHESIS_ORDER
+
 
 @dataclass(frozen=True)
 class Thresholds:
     """Binary and atomic decision thresholds."""
 
     binary: float
-    atomic: tuple[float, float, float, float]
+    atomic: tuple[float, ...]
+    hypothesis_names: tuple[str, ...] = HYPOTHESIS_ORDER
 
-    def as_dict(self) -> dict[str, float]:
-        return {
+    def __post_init__(self) -> None:
+        if not self.atomic:
+            raise ValueError("At least one atomic threshold is required")
+        if len(self.atomic) != len(self.hypothesis_names):
+            raise ValueError("Atomic thresholds and hypothesis_names must have equal length")
+        if not 0.0 <= float(self.binary) <= 1.0:
+            raise ValueError("binary threshold must be in [0,1]")
+        if any(not 0.0 <= float(value) <= 1.0 for value in self.atomic):
+            raise ValueError("atomic thresholds must be in [0,1]")
+        if len(set(self.hypothesis_names)) != len(self.hypothesis_names):
+            raise ValueError("hypothesis_names must be unique")
+
+    def as_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
             "binary_threshold": self.binary,
-            "fs_threshold": self.atomic[0],
-            "fa_threshold": self.atomic[1],
-            "ts_threshold": self.atomic[2],
-            "ta_threshold": self.atomic[3],
+            "hypothesis_names": list(self.hypothesis_names),
+            "atomic_thresholds": list(self.atomic),
         }
+        for name, threshold in zip(self.hypothesis_names, self.atomic):
+            result[f"{name.lower()}_threshold"] = threshold
+        return result
 
 
 DEFAULT_THRESHOLDS = Thresholds(binary=0.5, atomic=(0.5, 0.5, 0.5, 0.5))
+
+
+def default_thresholds_for_hypotheses(
+    hypothesis_names: tuple[str, ...] | list[str],
+) -> Thresholds:
+    """Return ontology-aligned neutral thresholds for fresh trainer state."""
+
+    names = tuple(str(name) for name in hypothesis_names)
+    return Thresholds(binary=0.5, atomic=(0.5,) * len(names), hypothesis_names=names)
 
 
 def _grid(section: Mapping[str, Any]) -> np.ndarray:
@@ -48,11 +73,15 @@ def tune_thresholds(
     atomic_scores: np.ndarray,
     config: Mapping[str, Any],
     progress: bool = True,
+    hypothesis_names: tuple[str, ...] | list[str] | None = None,
 ) -> Thresholds:
     """Tune thresholds exclusively on validation predictions."""
 
     if not bool(config.get("enabled", True)):
-        return DEFAULT_THRESHOLDS
+        names = tuple(hypothesis_names or HYPOTHESIS_ORDER[: atomic_targets.shape[1]])
+        return Thresholds(
+            binary=0.5, atomic=(0.5,) * atomic_targets.shape[1], hypothesis_names=names
+        )
     binary_threshold = _tune_binary(
         binary_targets=binary_targets,
         binary_scores=binary_scores,
@@ -65,7 +94,14 @@ def tune_thresholds(
         section=config["attribution"],
         progress=progress,
     )
-    return Thresholds(binary=binary_threshold, atomic=tuple(float(v) for v in atomic_thresholds))
+    names = tuple(hypothesis_names or HYPOTHESIS_ORDER[: len(atomic_thresholds)])
+    if len(names) != len(atomic_thresholds):
+        raise ValueError("hypothesis_names must align with atomic targets")
+    return Thresholds(
+        binary=binary_threshold,
+        atomic=tuple(float(v) for v in atomic_thresholds),
+        hypothesis_names=names,
+    )
 
 
 def _tune_binary(

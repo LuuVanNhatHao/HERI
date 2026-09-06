@@ -20,7 +20,7 @@ from src.evaluation.evaluator import compute_metrics_and_reports, move_batch_to_
 from src.experiments import validate_hera_checkpoint_variant
 from src.losses.hera_components import HERAMultitaskLoss
 from src.models.hera import HERADGM
-from src.thresholding.tuner import DEFAULT_THRESHOLDS, Thresholds, tune_thresholds
+from src.thresholding.tuner import Thresholds, default_thresholds_for_hypotheses, tune_thresholds
 from src.training.checkpoint import restore_checkpoint, save_checkpoint
 from src.training.optimizer import (
     apply_training_stage,
@@ -166,7 +166,7 @@ class HERATrainer:
             device=self.device,
         )
         if self.model.deberta is None or not hasattr(self.model.deberta, "tokenizer"):
-            raise RuntimeError("HERADGM requires an attached DeBERTa fast tokenizer for DGM4 loading")
+            raise RuntimeError("HERADGM requires an attached DeBERTa fast tokenizer for dataset loading")
         tokenizer = self.model.deberta.tokenizer
         smoke = config.get("smoke", {})
         self.train_loader = create_dataloader(
@@ -183,7 +183,10 @@ class HERATrainer:
             max_samples=smoke.get("val_max_samples"),
             samples_per_class=smoke.get("samples_per_class"),
         )
-        self.state = TrainingState()
+        hypothesis_names = tuple(config["model"]["hypotheses"]["order"])
+        self.state = TrainingState(
+            thresholds=default_thresholds_for_hypotheses(hypothesis_names)
+        )
         self.history_path = self.run_dir / "metrics" / "history.csv"
         self._lazy_initialized = False
         self._active_stage: str | None = None
@@ -331,10 +334,18 @@ class HERATrainer:
                 atomic_scores=torch.tensor(val_bundle.atomic_scores).numpy(),
                 config=self.config["thresholding"],
                 progress=self.progress,
+                hypothesis_names=tuple(self.config["model"]["hypotheses"]["order"]),
             )
             self.state.thresholds = thresholds
             reports = compute_metrics_and_reports(val_bundle, thresholds)
-            default_reports = compute_metrics_and_reports(val_bundle, DEFAULT_THRESHOLDS)
+            default_reports = compute_metrics_and_reports(
+                val_bundle,
+                Thresholds(
+                    binary=0.5,
+                    atomic=(0.5,) * len(thresholds.atomic),
+                    hypothesis_names=thresholds.hypothesis_names,
+                ),
+            )
             router_summary = _aggregate_router_summaries(val_bundle.router_batch_summaries)
             _warn_router_collapse(router_summary)
             tqdm.write("Validation binary classification_report:")
@@ -1069,14 +1080,14 @@ def _selection_score_tuple(metrics: Mapping[str, Any], config: Mapping[str, Any]
 
 
 def _thresholds_from_mapping(data: Mapping[str, Any]) -> Thresholds:
+    names = tuple(data.get("hypothesis_names", ("FS", "FA", "TS", "TA")))
+    values = data.get("atomic_thresholds")
+    if values is None:
+        values = [data[f"{name.lower()}_threshold"] for name in names]
     return Thresholds(
         binary=float(data["binary_threshold"]),
-        atomic=(
-            float(data["fs_threshold"]),
-            float(data["fa_threshold"]),
-            float(data["ts_threshold"]),
-            float(data["ta_threshold"]),
-        ),
+        atomic=tuple(float(value) for value in values),
+        hypothesis_names=names,
     )
 
 

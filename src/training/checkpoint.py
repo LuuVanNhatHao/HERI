@@ -24,6 +24,24 @@ def validate_baseline_checkpoint_config(
     """Reject legacy/cross-variant baseline checkpoints before loading weights."""
 
     current_type = current_config.get("model", {}).get("baseline_type")
+    for section, key in (("dataset", "name"), ("dataset", "root")):
+        current_value = current_config.get(section, {}).get(key)
+        checkpoint_value = checkpoint_config.get(section, {}).get(key)
+        if current_value != checkpoint_value:
+            raise ValueError(
+                f"{context} baseline {section}.{key} mismatch: "
+                f"{current_value!r} != {checkpoint_value!r}"
+            )
+    current_hypotheses = current_config.get("model", {}).get("hypotheses", {}).get(
+        "order", ["FS", "FA", "TS", "TA"]
+    )
+    checkpoint_hypotheses = checkpoint_config.get("model", {}).get("hypotheses", {}).get(
+        "order", ["FS", "FA", "TS", "TA"]
+    )
+    if list(current_hypotheses) != list(checkpoint_hypotheses):
+        raise ValueError(f"{context} baseline hypothesis ontology mismatch")
+    if current_config.get("dataset_hashes", {}) != checkpoint_config.get("dataset_hashes", {}):
+        raise ValueError(f"{context} baseline dataset hash mismatch")
     if current_config.get("scientific_study", {}) != checkpoint_config.get("scientific_study", {}):
         raise ValueError(f"{context} checkpoint scientific-study mismatch")
     for key in ("binary_aggregation",):

@@ -84,6 +84,8 @@ def test_hera_prediction_export_contains_phase8_9_10_metadata(tmp_path: Path) ->
         "text_grounding_target_word_ids",
         "text_grounding_pred_word_ids",
         "router_diagnostics",
+        "image_grounding_available",
+        "text_grounding_available",
     ):
         assert column in prediction_df.columns
     assert "cf1" in summary_df.columns

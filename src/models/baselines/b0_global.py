@@ -27,6 +27,7 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
         fusion_hidden_dim: int,
         head_hidden_dim: int,
         dropout: float,
+        hypothesis_order: tuple[str, ...] = ("FS", "FA", "TS", "TA"),
         siglip2: nn.Module | None = None,
         dinov3: nn.Module | None = None,
         deberta: nn.Module | None = None,
@@ -42,7 +43,10 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
             dropout=dropout,
         )
         self.binary_head = BinaryHead(input_dim=fusion_dim)
-        self.attribution_head = AttributionHead(input_dim=fusion_dim)
+        self.hypothesis_order = tuple(hypothesis_order)
+        self.attribution_head = AttributionHead(
+            input_dim=fusion_dim, num_labels=len(self.hypothesis_order)
+        )
         self.image_grounding_head = ImageGroundingHead(
             fusion_dim=fusion_dim,
             hidden_dim=head_hidden_dim,
@@ -99,7 +103,7 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
             image_grounding_patch_boxes=image_patch_boxes,
             text_grounding_logits=text_logits,
             text_grounding_mask=text_mask,
-            metadata={"baseline_type": "b0_global"},
+            metadata={"baseline_type": "b0_global", "hypothesis_order": list(self.hypothesis_order)},
         )
         output.validate()
         return output

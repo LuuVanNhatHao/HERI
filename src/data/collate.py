@@ -1,4 +1,4 @@
-"""Collate function for DGM4 variable-length data."""
+"""Collate functions for variable-length multimodal manipulation data."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ def _pad_1d_tensors(
     return padded
 
 
-def dgm4_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
-    """Collate DGM4 items into a structured batch with masks."""
+def multimodal_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collate normalized DGM4/SAMM items into a structured batch."""
 
     if not batch:
         raise ValueError("Cannot collate an empty batch")
@@ -52,6 +52,9 @@ def dgm4_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "has_image_manipulation": torch.stack(
             [item["has_image_manipulation"] for item in batch]
         ),
+        "image_grounding_available": torch.stack(
+            [item.get("image_grounding_available", torch.tensor(True)) for item in batch]
+        ).to(torch.bool),
         "fake_text_pos": _pad_1d_tensors(
             fake_text_positions,
             pad_value=-1,
@@ -86,7 +89,20 @@ def dgm4_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "has_text_manipulation": torch.stack(
             [item["has_text_manipulation"] for item in batch]
         ),
+        "text_grounding_available": torch.stack(
+            [item.get("text_grounding_available", torch.tensor(True)) for item in batch]
+        ).to(torch.bool),
         "fake_cls": [item["fake_cls"] for item in batch],
         "generator": [item["generator"] for item in batch],
         "image_source": [item["image_source"] for item in batch],
+        "dataset_name": [item.get("dataset_name", "DGM4") for item in batch],
+        "class_target": torch.tensor(
+            [int(item.get("class_target", -1)) for item in batch], dtype=torch.long
+        ),
+        "class_names": list(batch[0].get("class_names", [])),
+        "hypothesis_names": list(batch[0].get("hypothesis_names", [])),
     }
+
+
+# Public compatibility alias retained for all existing DGM4 callers/tests.
+dgm4_collate = multimodal_collate

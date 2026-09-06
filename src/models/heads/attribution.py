@@ -22,12 +22,15 @@ class AttributionHead(nn.Module):
 class HypothesisAttributionHead(nn.Module):
     """Map each graph hypothesis state to its own atomic manipulation logit."""
 
-    def __init__(self, *, hidden_dim: int, dropout: float = 0.0) -> None:
+    def __init__(self, *, hidden_dim: int, dropout: float = 0.0,
+                 hypothesis_order: tuple[str, ...] = HYPOTHESIS_ORDER) -> None:
         super().__init__()
         if int(hidden_dim) <= 0:
             raise ValueError("hidden_dim must be positive")
         self.hidden_dim = int(hidden_dim)
-        self.order = HYPOTHESIS_ORDER
+        self.order = tuple(hypothesis_order)
+        if not self.order or len(set(self.order)) != len(self.order):
+            raise ValueError("hypothesis_order must be non-empty and unique")
         self.readouts = nn.ModuleList(
             [
                 nn.Sequential(
@@ -44,13 +47,13 @@ class HypothesisAttributionHead(nn.Module):
         hypothesis_features: torch.Tensor,
         hypothesis_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Return atomic logits in frozen [FS,FA,TS,TA] order."""
+        """Return one attribution logit per configured hypothesis."""
 
         if hypothesis_features.ndim != 3:
-            raise ValueError(f"hypothesis_features must be [B,4,D], got {tuple(hypothesis_features.shape)}")
+            raise ValueError(f"hypothesis_features must be [B,K,D], got {tuple(hypothesis_features.shape)}")
         batch, hypotheses, hidden_dim = hypothesis_features.shape
-        if hypotheses != len(HYPOTHESIS_ORDER):
-            raise ValueError("hypothesis_features must preserve frozen [FS,FA,TS,TA] order")
+        if hypotheses != len(self.order):
+            raise ValueError("hypothesis_features must preserve configured hypothesis order")
         if hidden_dim != self.hidden_dim:
             raise ValueError(f"Expected hidden_dim={self.hidden_dim}, got {hidden_dim}")
         if hypothesis_mask is not None:
@@ -59,7 +62,7 @@ class HypothesisAttributionHead(nn.Module):
             if hypothesis_mask.dtype != torch.bool:
                 raise ValueError("hypothesis_mask must be bool")
             if not bool(hypothesis_mask.all()):
-                raise ValueError("All four HERA hypothesis states must be valid")
+                raise ValueError("All HERA hypothesis states must be valid")
         logits = [
             readout(hypothesis_features[:, hypothesis_index, :]).squeeze(-1)
             for hypothesis_index, readout in enumerate(self.readouts)

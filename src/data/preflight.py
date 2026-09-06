@@ -25,7 +25,6 @@ from .constants import (
     EXPECTED_SPLIT_ROWS,
     EXPECTED_TEXT_MANIPULATED_ROWS,
     EXPECTED_TOTAL_ROWS,
-    LABEL_ORDER,
 )
 from .dataset import load_annotations
 from .labels import (
@@ -97,7 +96,12 @@ class PreflightRecorder:
 
 
 def run_preflight(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Run configured DGM4 preflight and write Phase-1 artifacts."""
+    """Run the configured dataset preflight and write audit artifacts."""
+
+    if str(get_key(config, "dataset.name", "DGM4")).strip().upper() == "SAMM":
+        from .samm_preflight import run_samm_preflight
+
+        return run_samm_preflight(config)
 
     progress = _progress(config)
     output_root = Path(str(require_key(config, "output.root")))

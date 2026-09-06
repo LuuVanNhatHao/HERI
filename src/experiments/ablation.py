@@ -141,6 +141,14 @@ def validate_hera_checkpoint_variant(
     )
 
     current_variant = get_hera_ablation_variant(current_config)
+    if current_config.get("dataset", {}).get("name") != checkpoint_config.get("dataset", {}).get("name"):
+        raise ValueError(f"{context} checkpoint dataset mismatch")
+    if current_config.get("dataset", {}).get("root") != checkpoint_config.get("dataset", {}).get("root"):
+        raise ValueError(f"{context} checkpoint dataset root mismatch")
+    if current_config.get("model", {}).get("hypotheses") != checkpoint_config.get("model", {}).get("hypotheses"):
+        raise ValueError(f"{context} checkpoint hypothesis ontology mismatch")
+    if current_config.get("dataset_hashes", {}) != checkpoint_config.get("dataset_hashes", {}):
+        raise ValueError(f"{context} checkpoint dataset hash mismatch")
     if current_config.get("scientific_study", {}) != checkpoint_config.get("scientific_study", {}):
         raise ValueError(f"{context} checkpoint scientific-study mismatch")
     if current_config.get("reasoning_control", {}) != checkpoint_config.get("reasoning_control", {}):

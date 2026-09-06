@@ -23,13 +23,15 @@ def binary_classification_report_text(y_true: np.ndarray, y_pred: np.ndarray) ->
     )
 
 
-def attribution_classification_report_text(y_true: np.ndarray, y_pred: np.ndarray) -> str:
+def attribution_classification_report_text(
+    y_true: np.ndarray, y_pred: np.ndarray, target_names: list[str] | None = None
+) -> str:
     """Return sklearn's multilabel attribution classification report string."""
 
     return classification_report(
         y_true,
         y_pred,
-        target_names=ATTRIBUTION_TARGET_NAMES,
+        target_names=target_names or ATTRIBUTION_TARGET_NAMES,
         digits=4,
         zero_division=0,
     )
@@ -49,13 +51,15 @@ def binary_report_dict(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     )
 
 
-def attribution_report_dict(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+def attribution_report_dict(
+    y_true: np.ndarray, y_pred: np.ndarray, target_names: list[str] | None = None
+) -> dict:
     """Return sklearn's attribution classification report dictionary."""
 
     return classification_report(
         y_true,
         y_pred,
-        target_names=ATTRIBUTION_TARGET_NAMES,
+        target_names=target_names or ATTRIBUTION_TARGET_NAMES,
         digits=4,
         zero_division=0,
         output_dict=True,

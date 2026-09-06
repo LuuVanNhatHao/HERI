@@ -36,32 +36,35 @@ class HERADecisionOutput:
         """Validate Phase-5 tensor shapes, ranges, masks, and hypothesis order."""
 
         if self.hypothesis_features.ndim != 3:
-            raise ValueError("hypothesis_features must be [B,4,D]")
+            raise ValueError("hypothesis_features must be [B,K,D]")
         batch, hypotheses, _ = self.hypothesis_features.shape
-        if hypotheses != len(HYPOTHESIS_ORDER):
-            raise ValueError("hypothesis_features must preserve [FS,FA,TS,TA] order")
+        hypothesis_order = tuple(self.metadata.get("hypothesis_order", HYPOTHESIS_ORDER))
+        image_order = tuple(self.metadata.get("image_grounding_order", ("FS", "FA")))
+        text_order = tuple(self.metadata.get("text_grounding_order", ("TS", "TA")))
+        if hypotheses != len(hypothesis_order):
+            raise ValueError("hypothesis_features must preserve configured hypothesis order")
         if self.atomic_logits.shape != (batch, hypotheses):
-            raise ValueError("atomic_logits must be [B,4]")
+            raise ValueError(f"atomic_logits must be [B,{hypotheses}]")
         if self.atomic_probabilities.shape != self.atomic_logits.shape:
             raise ValueError("atomic_probabilities shape mismatch")
         if self.binary_probability.shape != (batch,):
             raise ValueError("binary_probability must be [B]")
         if self.binary_logit.shape != (batch,):
             raise ValueError("binary_logit must be [B]")
-        if self.image_grounding_logits.ndim != 3 or self.image_grounding_logits.shape[:2] != (batch, 2):
-            raise ValueError("image_grounding_logits must be [B,2,N_patch]")
+        if self.image_grounding_logits.ndim != 3 or self.image_grounding_logits.shape[:2] != (batch, len(image_order)):
+            raise ValueError("image_grounding_logits must align with image_grounding_order")
         if self.image_grounding_probabilities.shape != self.image_grounding_logits.shape:
             raise ValueError("image_grounding_probabilities shape mismatch")
         if self.image_grounding_mask.shape != (batch, self.image_grounding_logits.shape[-1]):
             raise ValueError("image_grounding_mask must be [B,N_patch]")
         if self.image_grounding_mask.dtype != torch.bool:
             raise ValueError("image_grounding_mask must be bool")
-        if self.image_grounding_boxes.shape != (batch, 2, 4):
-            raise ValueError("image_grounding_boxes must be [B,2,4]")
+        if self.image_grounding_boxes.shape != (batch, len(image_order), 4):
+            raise ValueError("image_grounding_boxes must align with image_grounding_order")
         if self.image_grounding_patch_boxes.shape != (batch, self.image_grounding_logits.shape[-1], 4):
             raise ValueError("image_grounding_patch_boxes must be [B,N_patch,4]")
-        if self.text_grounding_logits.ndim != 3 or self.text_grounding_logits.shape[:2] != (batch, 2):
-            raise ValueError("text_grounding_logits must be [B,2,N_full_text]")
+        if self.text_grounding_logits.ndim != 3 or self.text_grounding_logits.shape[:2] != (batch, len(text_order)):
+            raise ValueError("text_grounding_logits must align with text_grounding_order")
         if self.text_grounding_probabilities.shape != self.text_grounding_logits.shape:
             raise ValueError("text_grounding_probabilities shape mismatch")
         if self.text_grounding_mask.shape != (batch, self.text_grounding_logits.shape[-1]):
@@ -100,7 +103,7 @@ class HERADecisionOutput:
             raise ValueError("text_word_ids must align with text_grounding_mask")
         if self.evidence_support is not None:
             if self.evidence_support.shape != (batch, hypotheses):
-                raise ValueError("evidence_support must be [B,4]")
+                raise ValueError("evidence_support must be [B,K]")
             if not torch.isfinite(self.evidence_support).all():
                 raise FloatingPointError("evidence_support contains non-finite values")
             if bool(((self.evidence_support < 0) | (self.evidence_support > 1)).any()):

@@ -5,10 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+import numpy as np
 import pandas as pd
 
-from src.evaluation.evaluator import PredictionBundle
+from src.evaluation.evaluator import PredictionBundle, exclusive_class_decision_scores
 from src.thresholding.tuner import Thresholds
+
+
+def _column_token(name: str) -> str:
+    return "".join(char.lower() if char.isalnum() else "_" for char in name).strip("_")
 
 
 def write_predictions_csv(
@@ -21,33 +26,31 @@ def write_predictions_csv(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = []
+    hypothesis_names = list(
+        bundle.hypothesis_names or thresholds.hypothesis_names
+    )
+    if len(hypothesis_names) != len(thresholds.atomic):
+        raise ValueError("Prediction hypothesis names and thresholds do not align")
     for idx, sample_id in enumerate(bundle.ids):
         atomic_scores = bundle.atomic_scores[idx]
         atomic_targets = bundle.atomic_targets[idx]
-        rows.append(
-            {
+        row = {
                 "id": sample_id,
                 "fake_cls": bundle.fake_cls[idx],
                 "binary_target": bundle.binary_targets[idx],
                 "binary_probability": bundle.binary_scores[idx],
                 "predicted_binary": int(bundle.binary_scores[idx] >= thresholds.binary),
-                "fs_target": atomic_targets[0],
-                "fa_target": atomic_targets[1],
-                "ts_target": atomic_targets[2],
-                "ta_target": atomic_targets[3],
-                "fs_probability": atomic_scores[0],
-                "fa_probability": atomic_scores[1],
-                "ts_probability": atomic_scores[2],
-                "ta_probability": atomic_scores[3],
-                "predicted_fs": int(atomic_scores[0] >= thresholds.atomic[0]),
-                "predicted_fa": int(atomic_scores[1] >= thresholds.atomic[1]),
-                "predicted_ts": int(atomic_scores[2] >= thresholds.atomic[2]),
-                "predicted_ta": int(atomic_scores[3] >= thresholds.atomic[3]),
-                "generator": bundle.generator[idx] or "",
+                "generator": _value_or_blank(bundle.generator, idx),
                 "image_source": _value_or_blank(bundle.image_source, idx),
                 "annotation_image_path": _value_or_blank(bundle.annotation_image_path, idx),
                 "has_image_manipulation": bundle.has_image_manipulation[idx],
                 "has_text_manipulation": bundle.has_text_manipulation[idx],
+                "image_grounding_available": _value_or_blank(
+                    bundle.image_grounding_available, idx
+                ),
+                "text_grounding_available": _value_or_blank(
+                    bundle.text_grounding_available, idx
+                ),
                 "face_area_fraction": _value_or_blank(bundle.face_area_fraction, idx),
                 "face_size_bucket": _value_or_blank(bundle.face_size_bucket, idx),
                 "image_grounding_pred_index": _value_or_blank(bundle.image_grounding_pred_indices, idx),
@@ -59,7 +62,27 @@ def write_predictions_csv(
                 **(bundle.text_sample_counts[idx] if idx < len(bundle.text_sample_counts) else {}),
                 "router_diagnostics": _value_or_blank(bundle.router_diagnostics, idx),
             }
-        )
+        for hypothesis_index, name in enumerate(hypothesis_names):
+            token = _column_token(name)
+            row[f"{token}_target"] = atomic_targets[hypothesis_index]
+            row[f"{token}_probability"] = atomic_scores[hypothesis_index]
+            row[f"predicted_{token}"] = int(
+                atomic_scores[hypothesis_index] >= thresholds.atomic[hypothesis_index]
+            )
+        if idx < len(bundle.class_targets) and bundle.class_targets[idx] >= 0:
+            row["class_target"] = bundle.class_targets[idx]
+            if bundle.class_names and bundle.class_targets[idx] < len(bundle.class_names):
+                row["class_name"] = bundle.class_names[bundle.class_targets[idx]]
+            if len(bundle.class_names) == len(atomic_scores) + 1:
+                class_scores = exclusive_class_decision_scores(
+                    np.asarray([atomic_scores], dtype=float)
+                )[0]
+                class_pred = int(class_scores.argmax())
+                row["predicted_class"] = class_pred
+                row["predicted_class_name"] = bundle.class_names[class_pred]
+                for class_name, score in zip(bundle.class_names, class_scores):
+                    row[f"{_column_token(class_name)}_decision_score"] = float(score)
+        rows.append(row)
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
@@ -98,19 +121,26 @@ def write_summary_csv(
         "fake_precision": binary_report["fake"]["precision"],
         "fake_recall": binary_report["fake"]["recall"],
         "fake_f1": binary_report["fake"]["f1-score"],
-        "fs_precision": attr_report["face_swap"]["precision"],
-        "fs_recall": attr_report["face_swap"]["recall"],
-        "fs_f1": attr_report["face_swap"]["f1-score"],
-        "fa_precision": attr_report["face_attribute"]["precision"],
-        "fa_recall": attr_report["face_attribute"]["recall"],
-        "fa_f1": attr_report["face_attribute"]["f1-score"],
-        "ts_precision": attr_report["text_swap"]["precision"],
-        "ts_recall": attr_report["text_swap"]["recall"],
-        "ts_f1": attr_report["text_swap"]["f1-score"],
-        "ta_precision": attr_report["text_attribute"]["precision"],
-        "ta_recall": attr_report["text_attribute"]["recall"],
-        "ta_f1": attr_report["text_attribute"]["f1-score"],
     }
+    hypothesis_names = reports.get("hypothesis_names", list(thresholds.hypothesis_names))
+    report_names = reports.get("hypothesis_report_names", hypothesis_names)
+    for hypothesis_name, report_name in zip(hypothesis_names, report_names):
+        values = attr_report[report_name]
+        token = _column_token(hypothesis_name)
+        row[f"{token}_precision"] = values["precision"]
+        row[f"{token}_recall"] = values["recall"]
+        row[f"{token}_f1"] = values["f1-score"]
+    class_report = reports.get("class_report_dict")
+    if isinstance(class_report, Mapping):
+        for class_name, values in class_report.items():
+            if class_name in {"accuracy", "macro avg", "weighted avg"}:
+                continue
+            if not isinstance(values, Mapping):
+                continue
+            token = _column_token(str(class_name))
+            row[f"class_{token}_precision"] = values.get("precision")
+            row[f"class_{token}_recall"] = values.get("recall")
+            row[f"class_{token}_f1"] = values.get("f1-score")
     pd.DataFrame([row]).to_csv(path, index=False)
 
 

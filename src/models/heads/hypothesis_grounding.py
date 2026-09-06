@@ -19,11 +19,16 @@ TEXT_HYPOTHESIS_INDICES = (2, 3)
 class HypothesisConditionedImageGroundingHead(nn.Module):
     """Predict dense manipulation heatmaps and boxes from raw-image DINO patches."""
 
-    def __init__(self, *, hidden_dim: int, dropout: float = 0.0, scoring: str = "dot_product") -> None:
+    def __init__(self, *, hidden_dim: int, dropout: float = 0.0, scoring: str = "dot_product",
+                 hypothesis_indices: tuple[int, ...] = IMAGE_HYPOTHESIS_INDICES,
+                 hypothesis_count: int = len(HYPOTHESIS_ORDER)) -> None:
         super().__init__()
         if scoring != "dot_product":
             raise ValueError("Phase-5 image grounding currently supports scoring='dot_product'")
         self.hidden_dim = int(hidden_dim)
+        self.hypothesis_indices = tuple(int(index) for index in hypothesis_indices)
+        self.hypothesis_count = int(hypothesis_count)
+        _validate_hypothesis_indices(self.hypothesis_indices, self.hypothesis_count)
         self.patch_key = LazyFeatureProjection(output_dim=self.hidden_dim, dropout=float(dropout))
         self.hypothesis_queries = nn.ModuleList(
             [
@@ -32,7 +37,7 @@ class HypothesisConditionedImageGroundingHead(nn.Module):
                     nn.Dropout(float(dropout)),
                     nn.Linear(self.hidden_dim, self.hidden_dim),
                 )
-                for _ in IMAGE_HYPOTHESIS_INDICES
+                for _ in self.hypothesis_indices
             ]
         )
         self.box_regressors = nn.ModuleList(
@@ -44,7 +49,7 @@ class HypothesisConditionedImageGroundingHead(nn.Module):
                     nn.Dropout(float(dropout)),
                     nn.Linear(self.hidden_dim, 4),
                 )
-                for _ in IMAGE_HYPOTHESIS_INDICES
+                for _ in self.hypothesis_indices
             ]
         )
 
@@ -56,7 +61,7 @@ class HypothesisConditionedImageGroundingHead(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return patch logits/probabilities, mask, and normalized boxes [B,2,4]."""
 
-        _validate_hypotheses(hypothesis_features, self.hidden_dim)
+        _validate_hypotheses(hypothesis_features, self.hidden_dim, self.hypothesis_count)
         image_evidence.validate()
         full_features, mask, normalized_patch_boxes = _dense_image_store(image_evidence)
         if full_features.shape[0] != hypothesis_features.shape[0]:
@@ -65,7 +70,7 @@ class HypothesisConditionedImageGroundingHead(nn.Module):
         logits = []
         boxes = []
         scale = math.sqrt(float(self.hidden_dim))
-        for local_head_index, hypothesis_index in enumerate(IMAGE_HYPOTHESIS_INDICES):
+        for local_head_index, hypothesis_index in enumerate(self.hypothesis_indices):
             hypothesis = hypothesis_features[:, hypothesis_index, :]
             query = self.hypothesis_queries[local_head_index](hypothesis)
             score = torch.sum(keys * query.unsqueeze(1), dim=-1) / scale
@@ -92,6 +97,8 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
         token_input_dim: int,
         dropout: float = 0.0,
         scoring: str = "dot_product",
+        hypothesis_indices: tuple[int, ...] = TEXT_HYPOTHESIS_INDICES,
+        hypothesis_count: int = len(HYPOTHESIS_ORDER),
     ) -> None:
         super().__init__()
         if scoring != "dot_product":
@@ -100,6 +107,9 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
             raise ValueError("token_input_dim must be positive and YAML-provided")
         self.hidden_dim = int(hidden_dim)
         self.token_input_dim = int(token_input_dim)
+        self.hypothesis_indices = tuple(int(index) for index in hypothesis_indices)
+        self.hypothesis_count = int(hypothesis_count)
+        _validate_hypothesis_indices(self.hypothesis_indices, self.hypothesis_count)
         self.token_key = nn.Sequential(
             nn.LayerNorm(self.token_input_dim),
             nn.Linear(self.token_input_dim, self.hidden_dim),
@@ -111,7 +121,7 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
                     nn.Dropout(float(dropout)),
                     nn.Linear(self.hidden_dim, self.hidden_dim),
                 )
-                for _ in TEXT_HYPOTHESIS_INDICES
+                for _ in self.hypothesis_indices
             ]
         )
 
@@ -123,7 +133,7 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return full-token logits/probabilities [B,2,N_full_text] and mask."""
 
-        _validate_hypotheses(hypothesis_features, self.hidden_dim)
+        _validate_hypotheses(hypothesis_features, self.hidden_dim, self.hypothesis_count)
         text_context.validate()
         if text_context.full_features is None:
             raise ValueError("text_context.full_features is mandatory for Phase-5 full-text grounding")
@@ -147,7 +157,7 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
         keys = self.token_key(full_features)
         logits = []
         scale = math.sqrt(float(self.hidden_dim))
-        for local_head_index, hypothesis_index in enumerate(TEXT_HYPOTHESIS_INDICES):
+        for local_head_index, hypothesis_index in enumerate(self.hypothesis_indices):
             query = self.hypothesis_queries[local_head_index](hypothesis_features[:, hypothesis_index, :])
             score = torch.sum(keys * query.unsqueeze(1), dim=-1) / scale
             logits.append(score)
@@ -159,9 +169,15 @@ class HypothesisConditionedTextGroundingHead(nn.Module):
 class GenericImageGroundingHead(nn.Module):
     """Dense bbox ablation without hypothesis-specific grounding queries."""
 
-    def __init__(self, *, hidden_dim: int, dropout: float = 0.0) -> None:
+    def __init__(self, *, hidden_dim: int, dropout: float = 0.0,
+                 output_count: int = len(IMAGE_HYPOTHESIS_INDICES),
+                 hypothesis_count: int = len(HYPOTHESIS_ORDER)) -> None:
         super().__init__()
         self.hidden_dim = int(hidden_dim)
+        self.output_count = int(output_count)
+        self.hypothesis_count = int(hypothesis_count)
+        if self.output_count < 1:
+            raise ValueError("output_count must be positive")
         self.patch_key = LazyFeatureProjection(output_dim=self.hidden_dim, dropout=float(dropout))
         self.patch_scorer = nn.Sequential(
             nn.LayerNorm(self.hidden_dim),
@@ -182,7 +198,7 @@ class GenericImageGroundingHead(nn.Module):
         hypothesis_features: torch.Tensor,
         image_evidence: EvidenceSet,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        _validate_hypotheses(hypothesis_features, self.hidden_dim)
+        _validate_hypotheses(hypothesis_features, self.hidden_dim, self.hypothesis_count)
         image_evidence.validate()
         full_features, mask, normalized_patch_boxes = _dense_image_store(image_evidence)
         if full_features.shape[0] != hypothesis_features.shape[0]:
@@ -195,22 +211,28 @@ class GenericImageGroundingHead(nn.Module):
         generic_box = _normalized_center_size_box(
             self.box_regressor(torch.cat([context, geometric_prior], dim=-1))
         )
-        logits = generic_logits.unsqueeze(1).expand(-1, len(IMAGE_HYPOTHESIS_INDICES), -1)
+        logits = generic_logits.unsqueeze(1).expand(-1, self.output_count, -1)
         logits = logits.masked_fill(~mask.unsqueeze(1), -1e4)
         probabilities = torch.sigmoid(logits).masked_fill(~mask.unsqueeze(1), 0.0)
-        boxes = generic_box.unsqueeze(1).expand(-1, len(IMAGE_HYPOTHESIS_INDICES), -1)
+        boxes = generic_box.unsqueeze(1).expand(-1, self.output_count, -1)
         return logits, probabilities, mask, boxes
 
 
 class GenericTextGroundingHead(nn.Module):
     """Ground manipulated tokens without receiving TS/TA hypotheses."""
 
-    def __init__(self, *, hidden_dim: int, token_input_dim: int, dropout: float = 0.0) -> None:
+    def __init__(self, *, hidden_dim: int, token_input_dim: int, dropout: float = 0.0,
+                 output_count: int = len(TEXT_HYPOTHESIS_INDICES),
+                 hypothesis_count: int = len(HYPOTHESIS_ORDER)) -> None:
         super().__init__()
         if int(token_input_dim) <= 0:
             raise ValueError("token_input_dim must be positive")
         self.hidden_dim = int(hidden_dim)
         self.token_input_dim = int(token_input_dim)
+        self.output_count = int(output_count)
+        self.hypothesis_count = int(hypothesis_count)
+        if self.output_count < 1:
+            raise ValueError("output_count must be positive")
         self.token_scorer = nn.Sequential(
             nn.LayerNorm(self.token_input_dim),
             nn.Linear(self.token_input_dim, self.hidden_dim),
@@ -225,7 +247,7 @@ class GenericTextGroundingHead(nn.Module):
         hypothesis_features: torch.Tensor,
         text_context: EvidenceSet,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        _validate_hypotheses(hypothesis_features, self.hidden_dim)
+        _validate_hypotheses(hypothesis_features, self.hidden_dim, self.hypothesis_count)
         text_context.validate()
         if text_context.full_features is None or text_context.full_word_ids is None:
             raise ValueError("Generic text grounding requires the full DeBERTa token store")
@@ -245,21 +267,30 @@ class GenericTextGroundingHead(nn.Module):
         word_mask = text_context.full_word_ids.to(full_features.device) != PAD_WORD_ID
         mask = full_mask & word_mask
         generic_logits = self.token_scorer(full_features).squeeze(-1)
-        logits = generic_logits.unsqueeze(1).expand(-1, len(TEXT_HYPOTHESIS_INDICES), -1)
+        logits = generic_logits.unsqueeze(1).expand(-1, self.output_count, -1)
         logits = logits.masked_fill(~mask.unsqueeze(1), -1e4)
         probabilities = torch.sigmoid(logits).masked_fill(~mask.unsqueeze(1), 0.0)
         return logits, probabilities, mask
 
 
-def _validate_hypotheses(hypothesis_features: torch.Tensor, hidden_dim: int) -> None:
+def _validate_hypotheses(
+    hypothesis_features: torch.Tensor, hidden_dim: int, hypothesis_count: int
+) -> None:
     if hypothesis_features.ndim != 3:
-        raise ValueError(f"hypothesis_features must be [B,4,D], got {tuple(hypothesis_features.shape)}")
-    if hypothesis_features.shape[1] != len(HYPOTHESIS_ORDER):
-        raise ValueError("hypothesis_features must preserve frozen [FS,FA,TS,TA] order")
+        raise ValueError(f"hypothesis_features must be [B,K,D], got {tuple(hypothesis_features.shape)}")
+    if hypothesis_features.shape[1] != hypothesis_count:
+        raise ValueError("hypothesis_features must preserve configured hypothesis order")
     if hypothesis_features.shape[-1] != hidden_dim:
         raise ValueError(f"hypothesis hidden_dim mismatch: expected {hidden_dim}, got {hypothesis_features.shape[-1]}")
     if not torch.isfinite(hypothesis_features).all():
         raise FloatingPointError("hypothesis_features contain non-finite values")
+
+
+def _validate_hypothesis_indices(indices: tuple[int, ...], hypothesis_count: int) -> None:
+    if not indices or len(set(indices)) != len(indices):
+        raise ValueError("grounding hypothesis indices must be non-empty and unique")
+    if min(indices) < 0 or max(indices) >= hypothesis_count:
+        raise ValueError("grounding hypothesis index is out of range")
 
 
 def _masked_softmax(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

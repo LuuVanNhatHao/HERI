@@ -20,19 +20,16 @@ from .edges import (
 from .outputs import GraphBatch
 from .schema import (
     HYPOTHESIS,
-    HYPOTHESIS_TO_INDEX,
     SEMANTIC_ALIGNS,
     SPATIAL_CORRESPONDS,
-    SUPPORTS_FA,
-    SUPPORTS_FS,
-    SUPPORTS_TA,
-    SUPPORTS_TS,
     TEXT_ALIGNMENT,
     TEXT_CONTEXT,
     TOKEN_CONTEXTUALIZES,
     VISUAL_FORENSIC,
     VISUAL_SEMANTIC,
-    CANONICAL_EDGE_TYPES,
+    HypothesisSpec,
+    edge_types_for_hypotheses,
+    support_relation_name,
     QUERIES_TEXT_ALIGNMENT,
     QUERIES_TEXT_CONTEXT,
     QUERIES_VISUAL_FORENSIC,
@@ -56,6 +53,11 @@ class HypothesisEvidenceGraphBuilder:
         self.config = dict(config)
         self.hidden_dim = int(config["hidden_dim"])
         self.edge_config = config["edges"]
+        self.hypothesis_spec = HypothesisSpec.from_mapping(config.get("hypotheses"))
+        self.hypothesis_to_index = {
+            name: index for index, name in enumerate(self.hypothesis_spec.order)
+        }
+        self.edge_types = edge_types_for_hypotheses(self.hypothesis_spec.order)
         _validate_edge_config(self.edge_config)
         self.feedback_enabled = bool(config["reasoning"].get("hypothesis_feedback", True))
 
@@ -67,8 +69,10 @@ class HypothesisEvidenceGraphBuilder:
         """Return a flattened heterogeneous graph batch with no target inputs."""
 
         evidence.validate()
-        if hypothesis_features.ndim != 3 or hypothesis_features.shape[1] != 4:
-            raise ValueError("hypothesis_features must be [B,4,Dg]")
+        if hypothesis_features.ndim != 3 or hypothesis_features.shape[1] != len(self.hypothesis_spec.order):
+            raise ValueError(
+                f"hypothesis_features must be [B,{len(self.hypothesis_spec.order)},Dg]"
+            )
         if hypothesis_features.shape[-1] != self.hidden_dim:
             raise ValueError("hypothesis_features last dimension must equal graph.hidden_dim")
         batch_size = hypothesis_features.shape[0]
@@ -97,6 +101,9 @@ class HypothesisEvidenceGraphBuilder:
                 "reasoning_cycles": int(self.config["reasoning"]["cycles"]),
                 "hypothesis_feedback": self.feedback_enabled,
                 "evidence_mode": str(self.config.get("evidence_mode", "heterogeneous")),
+                "hypothesis_order": list(self.hypothesis_spec.order),
+                "node_types": list(stores),
+                "edge_types": list(self.edge_types),
             },
         )
         graph.validate()
@@ -116,11 +123,11 @@ class HypothesisEvidenceGraphBuilder:
         device = evidence.visual_semantic.features.device
         edge_index_dict = {
             edge_type: torch.empty((2, 0), dtype=torch.long, device=device)
-            for edge_type in CANONICAL_EDGE_TYPES
+            for edge_type in self.edge_types
         }
         edge_sample_indices = {
             edge_type: torch.empty(0, dtype=torch.long, device=device)
-            for edge_type in CANONICAL_EDGE_TYPES
+            for edge_type in self.edge_types
         }
         edge_attr_dict: dict[EdgeType, torch.Tensor] = {}
 
@@ -223,7 +230,7 @@ class HypothesisEvidenceGraphBuilder:
                 stores,
                 hypothesis_features,
             )
-        for edge_type in CANONICAL_EDGE_TYPES:
+        for edge_type in self.edge_types:
             if edge_type not in edge_attr_dict:
                 edge_count = edge_index_dict[edge_type].shape[1]
                 attrs = evidence.visual_semantic.features.new_zeros((edge_count, 2))
@@ -242,15 +249,15 @@ class HypothesisEvidenceGraphBuilder:
         hypothesis_features: torch.Tensor,
     ) -> None:
         for source_type, evidence_set, hypotheses in (
-            (VISUAL_FORENSIC, evidence.visual_forensic, ("FS", "FA")),
-            (TEXT_CONTEXT, evidence.text_context, ("TS", "TA")),
+            (VISUAL_FORENSIC, evidence.visual_forensic, self.hypothesis_spec.image),
+            (TEXT_CONTEXT, evidence.text_context, self.hypothesis_spec.text),
         ):
             for hypothesis in hypotheses:
                 relation = _support_relation(hypothesis)
                 pairs = _hypothesis_conditioned_pairs(
                     evidence_set=evidence_set,
                     hypothesis_features=hypothesis_features,
-                    hypothesis_indices=(HYPOTHESIS_TO_INDEX[hypothesis],),
+                    hypothesis_indices=(self.hypothesis_to_index[hypothesis],),
                 )
                 edge_type = (source_type, relation, HYPOTHESIS)
                 self._add_pairs(
@@ -269,12 +276,12 @@ class HypothesisEvidenceGraphBuilder:
             (VISUAL_SEMANTIC, evidence.visual_semantic),
             (TEXT_ALIGNMENT, evidence.text_alignment),
         ):
-            for hypothesis in ("FS", "FA", "TS", "TA"):
+            for hypothesis in self.hypothesis_spec.order:
                 relation = _support_relation(hypothesis)
                 pairs = _hypothesis_conditioned_pairs(
                     evidence_set=evidence_set,
                     hypothesis_features=hypothesis_features,
-                    hypothesis_indices=(HYPOTHESIS_TO_INDEX[hypothesis],),
+                    hypothesis_indices=(self.hypothesis_to_index[hypothesis],),
                 )
                 edge_type = (source_type, relation, HYPOTHESIS)
                 self._add_pairs(
@@ -297,13 +304,13 @@ class HypothesisEvidenceGraphBuilder:
     ) -> None:
         feedback_config = self.edge_config.get("feedback", {})
         for edge_type, evidence_set, hypotheses in (
-            ((HYPOTHESIS, QUERIES_VISUAL_FORENSIC, VISUAL_FORENSIC), evidence.visual_forensic, ("FS", "FA")),
-            ((HYPOTHESIS, QUERIES_TEXT_CONTEXT, TEXT_CONTEXT), evidence.text_context, ("TS", "TA")),
+            ((HYPOTHESIS, QUERIES_VISUAL_FORENSIC, VISUAL_FORENSIC), evidence.visual_forensic, self.hypothesis_spec.image),
+            ((HYPOTHESIS, QUERIES_TEXT_CONTEXT, TEXT_CONTEXT), evidence.text_context, self.hypothesis_spec.text),
         ):
             support_pairs = _hypothesis_conditioned_pairs(
                 evidence_set=evidence_set,
                 hypothesis_features=hypothesis_features,
-                hypothesis_indices=tuple(HYPOTHESIS_TO_INDEX[name] for name in hypotheses),
+                hypothesis_indices=tuple(self.hypothesis_to_index[name] for name in hypotheses),
             )
             pairs = reverse_pairs(support_pairs)
             self._add_pairs(edge_index_dict, edge_sample_indices, stores, edge_type=edge_type, pairs=pairs)
@@ -317,7 +324,7 @@ class HypothesisEvidenceGraphBuilder:
                 support_pairs = _hypothesis_conditioned_pairs(
                     evidence_set=evidence_set,
                     hypothesis_features=hypothesis_features,
-                    hypothesis_indices=(0, 1, 2, 3),
+                    hypothesis_indices=tuple(range(len(self.hypothesis_spec.order))),
                 )
                 pairs = reverse_pairs(support_pairs)
                 self._add_pairs(edge_index_dict, edge_sample_indices, stores, edge_type=edge_type, pairs=pairs)
@@ -397,12 +404,7 @@ def _hypothesis_store(hypothesis_features: torch.Tensor) -> _NodeStore:
 
 
 def _support_relation(hypothesis: str) -> str:
-    return {
-        "FS": SUPPORTS_FS,
-        "FA": SUPPORTS_FA,
-        "TS": SUPPORTS_TS,
-        "TA": SUPPORTS_TA,
-    }[hypothesis]
+    return support_relation_name(hypothesis)
 
 
 def _require_centers(evidence_set: EvidenceSet) -> torch.Tensor:

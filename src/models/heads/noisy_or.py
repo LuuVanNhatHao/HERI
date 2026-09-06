@@ -8,9 +8,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from src.graph.schema import HYPOTHESIS_ORDER
-
-
 @dataclass
 class NoisyOROutput:
     """Structured zero-parameter Noisy-OR output."""
@@ -29,8 +26,8 @@ class StableNoisyOR(nn.Module):
     def forward(self, atomic_logits: torch.Tensor) -> NoisyOROutput:
         """Compute stable Noisy-OR outputs from atomic logits [B,4]."""
 
-        if atomic_logits.ndim != 2 or atomic_logits.shape[1] != len(HYPOTHESIS_ORDER):
-            raise ValueError(f"atomic_logits must be [B,4], got {tuple(atomic_logits.shape)}")
+        if atomic_logits.ndim != 2 or atomic_logits.shape[1] < 1:
+            raise ValueError(f"atomic_logits must be [B,K] with K>=1, got {tuple(atomic_logits.shape)}")
         if not torch.isfinite(atomic_logits).all():
             raise FloatingPointError("atomic_logits contain non-finite values")
 
@@ -56,8 +53,8 @@ class StableNoisyOR(nn.Module):
 def noisy_or_from_probabilities(atomic_probabilities: torch.Tensor) -> torch.Tensor:
     """Reference probability-space Noisy-OR for tests and diagnostics."""
 
-    if atomic_probabilities.ndim != 2 or atomic_probabilities.shape[1] != len(HYPOTHESIS_ORDER):
-        raise ValueError("atomic_probabilities must be [B,4]")
+    if atomic_probabilities.ndim != 2 or atomic_probabilities.shape[1] < 1:
+        raise ValueError("atomic_probabilities must be [B,K] with K>=1")
     if bool(((atomic_probabilities < 0) | (atomic_probabilities > 1)).any()):
         raise ValueError("atomic_probabilities must be in [0,1]")
     return 1.0 - torch.prod(1.0 - atomic_probabilities, dim=1)

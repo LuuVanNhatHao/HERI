@@ -21,6 +21,105 @@ python scripts/run_scientific_study.py
 Use the new isolated scientific-v3 manifest for revised paper experiments.
 The older phase/cycle commands below remain available as historical workflows.
 
+## SAMM-20K benchmark
+
+SAMM is integrated through the same HERA evidence extractor, reliability
+router, heterogeneous graph reasoner, two-cycle rebuild, attribution-first
+decision path, and grounding modules used for DGM4.  Only the dataset ontology
+is instantiated differently: HERA uses two coupled hypotheses,
+`[SWAP, ATTRIBUTE]`, and both hypotheses can receive image and text evidence.
+This avoids treating SAMM as a four-label DGM4 clone while keeping the claimed
+architecture fixed.
+
+The canonical server layout is repo-relative and intentionally strict:
+
+```text
+data/SAMM/
+  train.json
+  val.json
+  test.json
+  images/
+    orig_output/
+    swap_jpg/
+    emotion_jpg/
+```
+
+Do not commit or copy the images into Git.  Place the extracted release at
+`data/SAMM`, or make `data/SAMM` a symlink to the server dataset location.  The
+configured protocol contains 20,000 train, 20,000 validation, and 50,000 test
+samples.  Preparation verifies the frozen annotation SHA256 values and every
+annotation path:
+
+```bash
+python scripts/prepare_data.py config/prepare_samm.yaml
+```
+
+The adapter clips out-of-bounds boxes to the original image geometry.  A fake
+sample with a missing/malformed image box or invalid/empty text localization
+remains in classification and attribution evaluation but is excluded from the
+affected grounding loss and metric through an explicit availability mask.
+Prediction CSVs expose those masks and the final metric report records the
+number excluded; samples are never silently dropped.
+
+Run one sample from each of the three classes before committing GPU time:
+
+```bash
+python scripts/hera_smoke.py config/smoke_samm_hera.yaml
+python scripts/model_smoke.py config/smoke_samm_baseline_b1.yaml
+```
+
+Then run the matched-backbone comparison.  HERA and B1 inherit the same
+SigLIP2, DINOv3, DeBERTa, preprocessing, split, optimizer schedule, and text
+length; they write to isolated roots and checkpoint selection uses validation
+`class_macro_f1`:
+
+```bash
+python scripts/train.py config/train_samm_hera.yaml
+python scripts/evaluate.py config/evaluate_samm_hera.yaml
+
+python scripts/train.py config/train_samm_baseline_b1.yaml
+python scripts/evaluate.py config/evaluate_samm_baseline_b1.yaml
+```
+
+SAMM evaluation reports binary detection, the two atomic hypotheses, image and
+text grounding, and the exclusive three-class result
+`orig/swap_manipulation/attribute_manipulation`.  The three-class decision uses
+`prod(1-p_h)` as the real score and the two hypothesis probabilities as the
+manipulation scores; these are decision scores rather than a normalized
+probability simplex.
+
+The two prespecified key ablations are materialized and run with the same SAMM
+protocol:
+
+```bash
+python scripts/run_hera_ablation.py \
+  config/experiments/hera_samm_key_ablations.yaml \
+  --dry-run
+
+python scripts/run_hera_ablation.py \
+  config/experiments/hera_samm_key_ablations.yaml
+```
+
+After canonical HERA evaluation exists for both datasets, generate the routing
+comparison used to test whether evidence allocation changes when moving from
+DGM4 to SAMM:
+
+```bash
+python scripts/compare_evidence_routing.py \
+  --input DGM4=outputs/phase7_final_clean_eval/<run_id>/predictions/test_predictions.csv \
+  --input SAMM=outputs/samm/hera_eval/samm_hera_test_evaluation/predictions/test_predictions.csv \
+  --reference DGM4 \
+  --comparison SAMM \
+  --output outputs/routing_dgm4_vs_samm
+```
+
+The analysis writes overall, real-only, fake-only, and class-stratified family
+reliabilities; within-sample routing shares; visual-vs-text balance; bootstrap
+confidence intervals; and standardized effects.  Treat these values as learned
+gating diagnostics, not causal attribution.  A DGM4-to-SAMM transfer experiment
+is intentionally deferred until the full evaluation, matched B1 comparison,
+two ablations, and routing analysis are complete.
+
 ## Final protocol (`hera_final_v2`)
 
 The final implementation intentionally breaks compatibility with earlier

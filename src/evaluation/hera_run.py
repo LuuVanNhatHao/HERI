@@ -179,6 +179,9 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     tqdm.write(reports["binary_report"])
     tqdm.write("Test attribution classification_report:")
     tqdm.write(reports["attribution_report"])
+    if reports.get("class_report"):
+        tqdm.write("Test dataset-class classification_report:")
+        tqdm.write(reports["class_report"])
     write_predictions_csv(
         bundle=bundle,
         thresholds=thresholds,
@@ -213,6 +216,8 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         "scientific_variant": config.get("scientific_study", {}).get("variant"),
         "run_id": run_id,
         "model_name": config["project"]["name"],
+        "dataset_name": config["dataset"]["name"],
+        "dataset_root": config["dataset"]["root"],
         "architecture_version": config["project"]["architecture_version"],
         "image_grounding_protocol": config["model"]["grounding"]["image"]["protocol"],
         "grounding_routing": config["model"]["grounding"]["routing"],

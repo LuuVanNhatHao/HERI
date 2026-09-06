@@ -51,6 +51,9 @@ def build_baseline_model(
         "siglip2": backbones.get("siglip2"),
         "dinov3": backbones.get("dinov3"),
         "deberta": backbones.get("deberta"),
+        "hypothesis_order": tuple(
+            model_config.get("hypotheses", {}).get("order", ("FS", "FA", "TS", "TA"))
+        ),
     }
     if baseline_type == "b0_global":
         return B0GlobalFusionBaseline(

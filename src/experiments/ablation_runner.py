@@ -1,4 +1,4 @@
-"""Production orchestration for the controlled HERA ablation suite.
+"""Production orchestration for controlled HERA ablation suites.
 
 The runner materializes complete train/evaluation YAML files and launches the
 same canonical entry points used for the main HERA experiment.  Every variant
@@ -292,7 +292,8 @@ def _bind_variant_protocol(
 ) -> None:
     if int(training_epochs) <= 0:
         raise ConfigError("suite.training_epochs must be positive")
-    train_config["project"]["name"] = f"HERA-DGM4-ablation-{variant}"
+    dataset_name = str(train_config["dataset"]["name"])
+    train_config["project"]["name"] = f"HERA-{dataset_name}-ablation-{variant}"
     train_config["project"]["config_name"] = f"ablation/{variant}/train"
     train_config["project"].pop("run_id", None)
     train_config["output"]["root"] = train_root
@@ -300,7 +301,7 @@ def _bind_variant_protocol(
     train_config["training"]["resume_from"] = None
     train_config["training"]["epochs"] = int(training_epochs)
 
-    evaluate_config["project"]["name"] = f"HERA-DGM4-ablation-{variant}"
+    evaluate_config["project"]["name"] = f"HERA-{dataset_name}-ablation-{variant}"
     evaluate_config["project"]["config_name"] = f"ablation/{variant}/evaluate"
     evaluate_config["project"]["run_id"] = f"hera_{variant}_test"
     evaluate_config["output"]["root"] = evaluate_root

@@ -202,6 +202,7 @@ class DGM4Dataset(Dataset[dict[str, Any]]):
             "atomic_target": torch.tensor(atomic_target(fake_cls), dtype=torch.float32),
             "fake_image_box_target": fake_image_box_target,
             "has_image_manipulation": torch.tensor(image_manipulated, dtype=torch.bool),
+            "image_grounding_available": torch.tensor(True, dtype=torch.bool),
             "fake_text_pos": torch.tensor(fake_text_pos, dtype=torch.long),
             "text_grounding_target": torch.tensor(text_alignment.labels, dtype=torch.long),
             "text_grounding_mask": torch.tensor(text_alignment.mask, dtype=torch.bool),
@@ -213,9 +214,11 @@ class DGM4Dataset(Dataset[dict[str, Any]]):
                 has_text_manipulation(fake_cls),
                 dtype=torch.bool,
             ),
+            "text_grounding_available": torch.tensor(True, dtype=torch.bool),
             "fake_cls": fake_cls,
             "generator": resolved.generator,
             "image_source": resolved.source,
+            "dataset_name": "DGM4",
         }
 
         encoding = text_alignment.encoding

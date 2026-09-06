@@ -86,6 +86,8 @@ def masked_image_bbox_loss(
 
     logits = output.image_grounding_logits
     applies = batch["has_image_manipulation"].to(logits.device).to(torch.bool)
+    if "image_grounding_available" in batch:
+        applies = applies & batch["image_grounding_available"].to(logits.device).to(torch.bool)
     targets = normalized_target_boxes(batch, device=logits.device, dtype=logits.dtype)
     return dense_box_grounding_loss(
         predicted_boxes=output.image_grounding_boxes,
@@ -107,6 +109,8 @@ def masked_text_grounding_loss(
     target = batch["text_grounding_target"].to(logits.device)
     mask = output.text_grounding_mask.to(logits.device).to(torch.bool)
     applies = batch["has_text_manipulation"].to(logits.device).to(torch.bool).unsqueeze(1)
+    if "text_grounding_available" in batch:
+        applies = applies & batch["text_grounding_available"].to(logits.device).to(torch.bool).unsqueeze(1)
     valid = mask & applies & (target >= 0)
     if not bool(valid.any()):
         return logits.sum() * 0.0

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+import re
+from dataclasses import dataclass
+from typing import Any, Mapping, TypeAlias
 
 
 NodeType: TypeAlias = str
@@ -39,30 +41,85 @@ QUERIES_TEXT_CONTEXT = "queries_text_context"
 QUERIES_VISUAL_SEMANTIC = "queries_visual_semantic"
 QUERIES_TEXT_ALIGNMENT = "queries_text_alignment"
 
-CANONICAL_EDGE_TYPES: tuple[EdgeType, ...] = (
+_BASE_EDGE_TYPES: tuple[EdgeType, ...] = (
     (VISUAL_SEMANTIC, SPATIAL_CORRESPONDS, VISUAL_FORENSIC),
     (VISUAL_FORENSIC, SPATIAL_CORRESPONDS, VISUAL_SEMANTIC),
     (VISUAL_SEMANTIC, SEMANTIC_ALIGNS, TEXT_ALIGNMENT),
     (TEXT_ALIGNMENT, SEMANTIC_ALIGNS, VISUAL_SEMANTIC),
     (TEXT_ALIGNMENT, TOKEN_CONTEXTUALIZES, TEXT_CONTEXT),
     (TEXT_CONTEXT, TOKEN_CONTEXTUALIZES, TEXT_ALIGNMENT),
-    (VISUAL_FORENSIC, SUPPORTS_FS, HYPOTHESIS),
-    (VISUAL_FORENSIC, SUPPORTS_FA, HYPOTHESIS),
-    (TEXT_CONTEXT, SUPPORTS_TS, HYPOTHESIS),
-    (TEXT_CONTEXT, SUPPORTS_TA, HYPOTHESIS),
-    (VISUAL_SEMANTIC, SUPPORTS_FS, HYPOTHESIS),
-    (VISUAL_SEMANTIC, SUPPORTS_FA, HYPOTHESIS),
-    (VISUAL_SEMANTIC, SUPPORTS_TS, HYPOTHESIS),
-    (VISUAL_SEMANTIC, SUPPORTS_TA, HYPOTHESIS),
-    (TEXT_ALIGNMENT, SUPPORTS_FS, HYPOTHESIS),
-    (TEXT_ALIGNMENT, SUPPORTS_FA, HYPOTHESIS),
-    (TEXT_ALIGNMENT, SUPPORTS_TS, HYPOTHESIS),
-    (TEXT_ALIGNMENT, SUPPORTS_TA, HYPOTHESIS),
     (HYPOTHESIS, QUERIES_VISUAL_FORENSIC, VISUAL_FORENSIC),
     (HYPOTHESIS, QUERIES_TEXT_CONTEXT, TEXT_CONTEXT),
     (HYPOTHESIS, QUERIES_VISUAL_SEMANTIC, VISUAL_SEMANTIC),
     (HYPOTHESIS, QUERIES_TEXT_ALIGNMENT, TEXT_ALIGNMENT),
 )
+
+
+@dataclass(frozen=True)
+class HypothesisSpec:
+    """Dataset ontology consumed by the dataset-independent HERA core."""
+
+    order: tuple[str, ...]
+    image: tuple[str, ...]
+    text: tuple[str, ...]
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any] | None) -> "HypothesisSpec":
+        mapping = value or {}
+        order = tuple(str(name) for name in mapping.get("order", HYPOTHESIS_ORDER))
+        image = tuple(str(name) for name in mapping.get("image", ("FS", "FA")))
+        text = tuple(str(name) for name in mapping.get("text", ("TS", "TA")))
+        if not order or len(set(order)) != len(order):
+            raise ValueError("Hypothesis order must be non-empty and unique")
+        unknown = (set(image) | set(text)).difference(order)
+        if unknown:
+            raise ValueError(f"Grounding hypothesis names are absent from order: {sorted(unknown)}")
+        if not image or not text:
+            raise ValueError("HERA requires at least one image and one text grounding hypothesis")
+        return cls(order=order, image=image, text=text)
+
+    @property
+    def image_indices(self) -> tuple[int, ...]:
+        return tuple(self.order.index(name) for name in self.image)
+
+    @property
+    def text_indices(self) -> tuple[int, ...]:
+        return tuple(self.order.index(name) for name in self.text)
+
+
+def support_relation_name(hypothesis: str) -> str:
+    token = re.sub(r"[^a-z0-9]+", "_", hypothesis.lower()).strip("_")
+    if not token:
+        raise ValueError(f"Invalid hypothesis name: {hypothesis!r}")
+    return f"supports_{token}"
+
+
+def edge_types_for_hypotheses(order: tuple[str, ...]) -> tuple[EdgeType, ...]:
+    support_edges = tuple(
+        (source, support_relation_name(name), HYPOTHESIS)
+        for source in (VISUAL_FORENSIC, TEXT_CONTEXT, VISUAL_SEMANTIC, TEXT_ALIGNMENT)
+        for name in order
+    )
+    # Preserve the historical DGM4 ordering for checkpoint/test compatibility.
+    if order == HYPOTHESIS_ORDER:
+        support_edges = (
+            (VISUAL_FORENSIC, SUPPORTS_FS, HYPOTHESIS),
+            (VISUAL_FORENSIC, SUPPORTS_FA, HYPOTHESIS),
+            (TEXT_CONTEXT, SUPPORTS_TS, HYPOTHESIS),
+            (TEXT_CONTEXT, SUPPORTS_TA, HYPOTHESIS),
+            (VISUAL_SEMANTIC, SUPPORTS_FS, HYPOTHESIS),
+            (VISUAL_SEMANTIC, SUPPORTS_FA, HYPOTHESIS),
+            (VISUAL_SEMANTIC, SUPPORTS_TS, HYPOTHESIS),
+            (VISUAL_SEMANTIC, SUPPORTS_TA, HYPOTHESIS),
+            (TEXT_ALIGNMENT, SUPPORTS_FS, HYPOTHESIS),
+            (TEXT_ALIGNMENT, SUPPORTS_FA, HYPOTHESIS),
+            (TEXT_ALIGNMENT, SUPPORTS_TS, HYPOTHESIS),
+            (TEXT_ALIGNMENT, SUPPORTS_TA, HYPOTHESIS),
+        )
+    return (*_BASE_EDGE_TYPES[:6], *support_edges, *_BASE_EDGE_TYPES[6:])
+
+
+CANONICAL_EDGE_TYPES: tuple[EdgeType, ...] = edge_types_for_hypotheses(HYPOTHESIS_ORDER)
 
 SUPPORTED_EDGE_CONFIGS = {
     "visual_semantic_visual_forensic": {"spatial_knn"},
@@ -71,10 +128,10 @@ SUPPORTED_EDGE_CONFIGS = {
 }
 
 
-def graph_metadata() -> tuple[list[NodeType], list[EdgeType]]:
+def graph_metadata(edge_types: tuple[EdgeType, ...] = CANONICAL_EDGE_TYPES) -> tuple[list[NodeType], list[EdgeType]]:
     """Return metadata in the format expected by PyG HGTConv."""
 
-    return list(NODE_TYPES), list(CANONICAL_EDGE_TYPES)
+    return list(NODE_TYPES), list(edge_types)
 
 
 def validate_node_type(node_type: NodeType) -> None:
@@ -91,15 +148,12 @@ def validate_edge_type(edge_type: EdgeType) -> None:
         raise ValueError(f"Unknown graph edge type: {edge_type!r}")
 
 
-def support_relation_for_hypothesis(hypothesis_index: int) -> RelationName:
+def support_relation_for_hypothesis(
+    hypothesis_index: int,
+    order: tuple[str, ...] = HYPOTHESIS_ORDER,
+) -> RelationName:
     """Map a hypothesis index to its support relation name."""
 
-    mapping = {
-        HYPOTHESIS_TO_INDEX["FS"]: SUPPORTS_FS,
-        HYPOTHESIS_TO_INDEX["FA"]: SUPPORTS_FA,
-        HYPOTHESIS_TO_INDEX["TS"]: SUPPORTS_TS,
-        HYPOTHESIS_TO_INDEX["TA"]: SUPPORTS_TA,
-    }
-    if hypothesis_index not in mapping:
+    if hypothesis_index < 0 or hypothesis_index >= len(order):
         raise ValueError(f"Invalid hypothesis index: {hypothesis_index}")
-    return mapping[hypothesis_index]
+    return support_relation_name(order[hypothesis_index])

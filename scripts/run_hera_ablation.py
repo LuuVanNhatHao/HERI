@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.experiments.ablation_runner import (
+from src.experiments.ablation_runner import (  # noqa: E402
     aggregate_ablation_summaries,
     load_ablation_suite,
     materialize_ablation_jobs,
@@ -20,7 +20,7 @@ from src.experiments.ablation_runner import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Materialize and sequentially run the six production HERA ablations. "
+            "Materialize and sequentially run the registered HERA ablations in a suite. "
             "B0/B1 baselines are intentionally excluded."
         )
     )

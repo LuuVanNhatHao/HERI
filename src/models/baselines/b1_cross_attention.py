@@ -30,6 +30,7 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
         head_hidden_dim: int,
         dropout: float,
         binary_aggregation: str = "independent_head",
+        hypothesis_order: tuple[str, ...] = ("FS", "FA", "TS", "TA"),
         siglip2: nn.Module | None = None,
         dinov3: nn.Module | None = None,
         deberta: nn.Module | None = None,
@@ -38,6 +39,7 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
         self.siglip2 = siglip2
         self.dinov3 = dinov3
         self.deberta = deberta
+        self.hypothesis_order = tuple(hypothesis_order)
         self.fusion = CrossAttentionFusion(
             fusion_dim=fusion_dim,
             num_layers=num_layers,
@@ -50,7 +52,9 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
         if binary_aggregation == "independent_head":
             self.binary_head = BinaryHead(input_dim=fusion_dim)
         self.noisy_or = StableNoisyOR()
-        self.attribution_head = AttributionHead(input_dim=fusion_dim)
+        self.attribution_head = AttributionHead(
+            input_dim=fusion_dim, num_labels=len(self.hypothesis_order)
+        )
         self.image_grounding_head = ImageGroundingHead(
             fusion_dim=fusion_dim,
             hidden_dim=head_hidden_dim,
@@ -117,6 +121,7 @@ class B1CrossAttentionBaseline(nn.Module, BaselineBackboneMixin):
             text_grounding_mask=text_mask,
             metadata={
                 "baseline_type": "b1_cross_attention",
+                "hypothesis_order": list(self.hypothesis_order),
                 "binary_aggregation": self.binary_aggregation,
                 "fused_token_count": fused_tokens.shape[1],
                 "fused_valid_tokens": fused_mask.sum(dim=1).detach().cpu().tolist(),

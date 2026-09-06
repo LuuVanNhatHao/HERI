@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 from src.graph.outputs import HypothesisGraphOutput
-from src.graph.schema import HYPOTHESIS_ORDER
+from src.graph.schema import HypothesisSpec
 from src.models.heads.binary import IndependentHypothesisBinaryHead
 from src.models.heads.attribution import HypothesisAttributionHead
 from src.models.heads.hypothesis_grounding import (
@@ -28,14 +28,13 @@ class HERADecisionModule(nn.Module):
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__()
         model_config = dict(config["model"] if "model" in config else config)
-        order = tuple(model_config["hypotheses"]["order"])
-        if order != HYPOTHESIS_ORDER:
-            raise ValueError(f"model.hypotheses.order must be {list(HYPOTHESIS_ORDER)}, got {list(order)}")
+        self.hypothesis_spec = HypothesisSpec.from_mapping(model_config["hypotheses"])
+        order = self.hypothesis_spec.order
         hidden_dim = int(model_config.get("hidden_dim", model_config["attribution"]["hidden_dim"]))
         if hidden_dim != int(model_config["attribution"]["hidden_dim"]):
             raise ValueError("model.hidden_dim and model.attribution.hidden_dim must match")
         self.hidden_dim = hidden_dim
-        self.hypothesis_order = HYPOTHESIS_ORDER
+        self.hypothesis_order = order
 
         attribution_config = model_config["attribution"]
         image_config = model_config["grounding"]["image"]
@@ -61,34 +60,43 @@ class HERADecisionModule(nn.Module):
         self.attribution_head = HypothesisAttributionHead(
             hidden_dim=hidden_dim,
             dropout=float(attribution_config["dropout"]),
+            hypothesis_order=order,
         )
         self.noisy_or = StableNoisyOR()
         if self.grounding_mode == "generic":
             self.image_grounding_head = GenericImageGroundingHead(
                 hidden_dim=hidden_dim,
                 dropout=float(image_config["dropout"]),
+                output_count=len(self.hypothesis_spec.image_indices),
+                hypothesis_count=len(order),
             )
             self.text_grounding_head = GenericTextGroundingHead(
                 hidden_dim=hidden_dim,
                 token_input_dim=int(text_config["token_input_dim"]),
                 dropout=float(text_config["dropout"]),
+                output_count=len(self.hypothesis_spec.text_indices),
+                hypothesis_count=len(order),
             )
         else:
             self.image_grounding_head = HypothesisConditionedImageGroundingHead(
                 hidden_dim=hidden_dim,
                 dropout=float(image_config["dropout"]),
                 scoring=str(image_config["scoring"]),
+                hypothesis_indices=self.hypothesis_spec.image_indices,
+                hypothesis_count=len(order),
             )
             self.text_grounding_head = HypothesisConditionedTextGroundingHead(
                 hidden_dim=hidden_dim,
                 token_input_dim=int(text_config["token_input_dim"]),
                 dropout=float(text_config["dropout"]),
                 scoring=str(text_config["scoring"]),
+                hypothesis_indices=self.hypothesis_spec.text_indices,
+                hypothesis_count=len(order),
             )
         if self.binary_aggregation == "independent_head":
             self.binary_head = IndependentHypothesisBinaryHead(
                 hidden_dim=hidden_dim,
-                hypotheses=len(HYPOTHESIS_ORDER),
+                hypotheses=len(order),
                 dropout=float(attribution_config["dropout"]),
             )
 
@@ -125,12 +133,12 @@ class HERADecisionModule(nn.Module):
             hypothesis_features=graph_output.hypothesis_features,
             text_context=graph_output.refined_text_context,
         )
-        evidence_support = torch.cat(
-            [
-                _absolute_grounding_support(image_logits, image_mask),
-                _absolute_grounding_support(text_logits, text_mask),
-            ],
-            dim=1,
+        evidence_support = _merge_grounding_support(
+            hypothesis_count=len(self.hypothesis_order),
+            image_support=_absolute_grounding_support(image_logits, image_mask),
+            image_indices=self.hypothesis_spec.image_indices,
+            text_support=_absolute_grounding_support(text_logits, text_mask),
+            text_indices=self.hypothesis_spec.text_indices,
         )
         output = HERADecisionOutput(
             atomic_logits=atomic_logits,
@@ -149,9 +157,11 @@ class HERADecisionModule(nn.Module):
             image_source_indices=graph_output.refined_visual_forensic.full_source_indices,
             text_word_ids=graph_output.refined_text_context.full_word_ids,
             metadata={
-                "hypothesis_order": list(HYPOTHESIS_ORDER),
-                "image_grounding_order": ["FS", "FA"],
-                "text_grounding_order": ["TS", "TA"],
+                "hypothesis_order": list(self.hypothesis_order),
+                "image_grounding_order": list(self.hypothesis_spec.image),
+                "text_grounding_order": list(self.hypothesis_spec.text),
+                "image_hypothesis_indices": list(self.hypothesis_spec.image_indices),
+                "text_hypothesis_indices": list(self.hypothesis_spec.text_indices),
                 "binary_aggregation": self.binary_aggregation,
                 "binary_shortcut": self.binary_aggregation == "independent_head",
                 "grounding_mode": self.grounding_mode,
@@ -180,13 +190,40 @@ class HERADecisionModule(nn.Module):
 
 
 def _absolute_grounding_support(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """Return absolute (non-softmax) local support for two hypotheses."""
+    """Return absolute (non-softmax) local support for grounding hypotheses."""
 
-    if logits.ndim != 3 or logits.shape[1] != 2:
-        raise ValueError("grounding logits must be [B,2,N]")
+    if logits.ndim != 3 or logits.shape[1] < 1:
+        raise ValueError("grounding logits must be [B,K_grounding,N]")
     if mask.shape != (logits.shape[0], logits.shape[2]):
         raise ValueError("grounding mask must be [B,N]")
     if logits.shape[-1] == 0:
-        return logits.new_zeros((logits.shape[0], 2))
+        return logits.new_zeros((logits.shape[0], logits.shape[1]))
     probabilities = torch.sigmoid(logits).masked_fill(~mask.unsqueeze(1), 0.0)
     return probabilities.max(dim=-1).values
+
+
+def _merge_grounding_support(
+    *,
+    hypothesis_count: int,
+    image_support: torch.Tensor,
+    image_indices: tuple[int, ...],
+    text_support: torch.Tensor,
+    text_indices: tuple[int, ...],
+) -> torch.Tensor:
+    """Merge modality support with a per-hypothesis probability union."""
+
+    rows: list[torch.Tensor] = []
+    for hypothesis_index in range(hypothesis_count):
+        sources = []
+        if hypothesis_index in image_indices:
+            sources.append(image_support[:, image_indices.index(hypothesis_index)])
+        if hypothesis_index in text_indices:
+            sources.append(text_support[:, text_indices.index(hypothesis_index)])
+        if not sources:
+            rows.append(image_support.new_zeros(image_support.shape[0]))
+        elif len(sources) == 1:
+            rows.append(sources[0])
+        else:
+            stacked = torch.stack(sources, dim=1)
+            rows.append(1.0 - torch.prod(1.0 - stacked, dim=1))
+    return torch.stack(rows, dim=1)

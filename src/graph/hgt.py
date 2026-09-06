@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import torch
 from torch import nn
@@ -42,7 +42,8 @@ def _accumulate_edge_messages(
 class EdgeAwareHGTGraphBlock(nn.Module):
     """Typed multi-head attention with relation projections and edge-confidence gates."""
 
-    def __init__(self, *, hidden_dim: int, heads: int, dropout: float) -> None:
+    def __init__(self, *, hidden_dim: int, heads: int, dropout: float,
+                 edge_types: Sequence[tuple[str, str, str]] = CANONICAL_EDGE_TYPES) -> None:
         super().__init__()
         if int(hidden_dim) % int(heads) != 0:
             raise ValueError("graph.hidden_dim must be divisible by graph.heads")
@@ -56,20 +57,21 @@ class EdgeAwareHGTGraphBlock(nn.Module):
         self.hidden_dim = int(hidden_dim)
         self.heads = int(heads)
         self.head_dim = self.hidden_dim // self.heads
+        self.edge_types = tuple(edge_types)
         self.query = nn.ModuleDict({node: nn.Linear(self.hidden_dim, self.hidden_dim) for node in NODE_TYPES})
         self.key = nn.ModuleDict({node: nn.Linear(self.hidden_dim, self.hidden_dim) for node in NODE_TYPES})
         self.value = nn.ModuleDict({node: nn.Linear(self.hidden_dim, self.hidden_dim) for node in NODE_TYPES})
         self.output = nn.ModuleDict({node: nn.Linear(self.hidden_dim, self.hidden_dim) for node in NODE_TYPES})
         self.relation_key = nn.ModuleList(
-            [nn.Linear(self.hidden_dim, self.hidden_dim, bias=False) for _ in CANONICAL_EDGE_TYPES]
+            [nn.Linear(self.hidden_dim, self.hidden_dim, bias=False) for _ in self.edge_types]
         )
         self.relation_value = nn.ModuleList(
-            [nn.Linear(self.hidden_dim, self.hidden_dim, bias=False) for _ in CANONICAL_EDGE_TYPES]
+            [nn.Linear(self.hidden_dim, self.hidden_dim, bias=False) for _ in self.edge_types]
         )
         self.edge_attention_bias = nn.ModuleList(
-            [nn.Linear(2, self.heads, bias=False) for _ in CANONICAL_EDGE_TYPES]
+            [nn.Linear(2, self.heads, bias=False) for _ in self.edge_types]
         )
-        self.relation_priority = nn.Parameter(torch.ones(len(CANONICAL_EDGE_TYPES), self.heads))
+        self.relation_priority = nn.Parameter(torch.ones(len(self.edge_types), self.heads))
         self.dropout = nn.Dropout(float(dropout))
         self.norms = nn.ModuleDict({node: nn.LayerNorm(self.hidden_dim) for node in NODE_TYPES})
         for encoder in self.edge_attention_bias:
@@ -87,7 +89,7 @@ class EdgeAwareHGTGraphBlock(nn.Module):
             node: features.new_zeros(features.shape)
             for node, features in x_dict.items()
         }
-        for relation_index, edge_type in enumerate(CANONICAL_EDGE_TYPES):
+        for relation_index, edge_type in enumerate(self.edge_types):
             src_type, _, dst_type = edge_type
             indices = edge_index_dict[edge_type]
             if indices.numel() == 0:
@@ -138,7 +140,8 @@ class EdgeAwareHGTGraphBlock(nn.Module):
 class HGTGraphEncoder(nn.Module):
     """Stack of canonical reliability-aware heterogeneous attention blocks."""
 
-    def __init__(self, *, hidden_dim: int, layers: int, heads: int, dropout: float) -> None:
+    def __init__(self, *, hidden_dim: int, layers: int, heads: int, dropout: float,
+                 edge_types: Sequence[tuple[str, str, str]] = CANONICAL_EDGE_TYPES) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
             [
@@ -146,6 +149,7 @@ class HGTGraphEncoder(nn.Module):
                     hidden_dim=hidden_dim,
                     heads=heads,
                     dropout=dropout,
+                    edge_types=edge_types,
                 )
                 for _ in range(int(layers))
             ]

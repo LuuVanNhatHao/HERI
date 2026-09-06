@@ -29,7 +29,10 @@ class GraphBatch:
     def validate(self) -> None:
         """Validate node tensors, edge indices, and cross-sample isolation."""
 
-        for node_type in NODE_TYPES:
+        node_types = tuple(self.metadata.get("node_types", NODE_TYPES))
+        edge_types = tuple(tuple(edge) for edge in self.metadata.get("edge_types", CANONICAL_EDGE_TYPES))
+        hypothesis_order = tuple(self.metadata.get("hypothesis_order", HYPOTHESIS_ORDER))
+        for node_type in node_types:
             if node_type not in self.x_dict:
                 raise ValueError(f"Missing node type in graph batch: {node_type}")
             features = self.x_dict[node_type]
@@ -44,7 +47,7 @@ class GraphBatch:
             if sample_indices.numel() and ((sample_indices < 0).any() or (sample_indices >= self.batch_size).any()):
                 raise ValueError(f"{node_type} node sample index out of range")
 
-        for edge_type in CANONICAL_EDGE_TYPES:
+        for edge_type in edge_types:
             if edge_type not in self.edge_index_dict:
                 raise ValueError(f"Missing edge type in graph batch: {edge_type}")
             edge_index = self.edge_index_dict[edge_type]
@@ -74,8 +77,10 @@ class GraphBatch:
                 raise FloatingPointError(f"{edge_type} edge_attr contains non-finite values")
 
         hypothesis_nodes = self.x_dict[HYPOTHESIS]
-        if hypothesis_nodes.shape[0] != self.batch_size * len(HYPOTHESIS_ORDER):
-            raise ValueError("Hypothesis node count must be exactly B*4")
+        if hypothesis_nodes.shape[0] != self.batch_size * len(hypothesis_order):
+            raise ValueError(
+                f"Hypothesis node count must be exactly B*{len(hypothesis_order)}"
+            )
 
 
 @dataclass
@@ -97,10 +102,13 @@ class HypothesisGraphOutput:
         """Validate Phase-4 output without interpreting embeddings as logits."""
 
         if self.hypothesis_features.ndim != 3:
-            raise ValueError("hypothesis_features must be [B,4,Dg]")
+            raise ValueError("hypothesis_features must be [B,K,Dg]")
         batch, hypotheses, hidden_dim = self.hypothesis_features.shape
-        if hypotheses != len(HYPOTHESIS_ORDER):
-            raise ValueError("hypothesis_features must preserve [FS,FA,TS,TA] order")
+        hypothesis_order = tuple(
+            self.graph_batch.metadata.get("hypothesis_order", HYPOTHESIS_ORDER)
+        )
+        if hypotheses != len(hypothesis_order):
+            raise ValueError("hypothesis_features must preserve configured hypothesis order")
         if self.hypothesis_mask.shape != (batch, hypotheses):
             raise ValueError("hypothesis_mask shape mismatch")
         if self.hypothesis_mask.dtype != torch.bool:
@@ -110,7 +118,7 @@ class HypothesisGraphOutput:
         if not torch.isfinite(self.hypothesis_features).all():
             raise FloatingPointError("hypothesis_features contain non-finite values")
         if not bool(self.hypothesis_mask.all()):
-            raise ValueError("All four hypothesis nodes must be valid")
+            raise ValueError("All configured hypothesis nodes must be valid")
         for state in self.intermediate_hypothesis_features:
             if state.shape != self.hypothesis_features.shape:
                 raise ValueError("intermediate hypothesis state shape mismatch")

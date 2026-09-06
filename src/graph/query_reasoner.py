@@ -9,7 +9,7 @@ from torch import nn
 from .adapters import TypedEvidenceFeatureAdapters
 from .hypotheses import HypothesisNodeInitializer
 from .outputs import GraphBatch, HypothesisGraphOutput
-from .schema import CANONICAL_EDGE_TYPES, HYPOTHESIS
+from .schema import HYPOTHESIS, HypothesisSpec, edge_types_for_hypotheses
 
 
 class LearnedQueryReasoner(nn.Module):
@@ -25,10 +25,18 @@ class LearnedQueryReasoner(nn.Module):
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__()
-        cfg = config["graph"]
+        cfg = dict(config["graph"])
+        cfg["hypotheses"] = dict(
+            config.get("model", {}).get(
+                "hypotheses",
+                {"order": ["FS", "FA", "TS", "TA"], "image": ["FS", "FA"], "text": ["TS", "TA"]},
+            )
+        )
         self.hidden_dim = int(cfg["hidden_dim"])
         self.cycles = int(cfg["reasoning"]["cycles"])
         self.hypotheses = HypothesisNodeInitializer(cfg)
+        self.hypothesis_spec = HypothesisSpec.from_mapping(cfg.get("hypotheses"))
+        self.edge_types = edge_types_for_hypotheses(self.hypothesis_spec.order)
         self.evidence_adapters = TypedEvidenceFeatureAdapters(
             hidden_dim=self.hidden_dim, input_dims=cfg.get("input_dims", {})
         )
@@ -65,18 +73,21 @@ class LearnedQueryReasoner(nn.Module):
             x_dict[name] = item.features[sample, local]
             sample_indices[name], local_indices[name] = sample, local
         x_dict[HYPOTHESIS] = state.reshape(-1, self.hidden_dim)
-        sample_indices[HYPOTHESIS] = torch.arange(batch_size, device=state.device).repeat_interleave(4)
-        local_indices[HYPOTHESIS] = torch.arange(4, device=state.device).repeat(batch_size)
+        hypothesis_count = len(self.hypothesis_spec.order)
+        sample_indices[HYPOTHESIS] = torch.arange(batch_size, device=state.device).repeat_interleave(hypothesis_count)
+        local_indices[HYPOTHESIS] = torch.arange(hypothesis_count, device=state.device).repeat(batch_size)
         graph = GraphBatch(
             x_dict=x_dict, node_sample_indices=sample_indices, node_local_indices=local_indices,
-            edge_index_dict={edge: torch.empty(2, 0, dtype=torch.long, device=state.device) for edge in CANONICAL_EDGE_TYPES},
-            edge_sample_indices={edge: torch.empty(0, dtype=torch.long, device=state.device) for edge in CANONICAL_EDGE_TYPES},
-            edge_attr_dict={edge: state.new_empty(0, 2) for edge in CANONICAL_EDGE_TYPES},
+            edge_index_dict={edge: torch.empty(2, 0, dtype=torch.long, device=state.device) for edge in self.edge_types},
+            edge_sample_indices={edge: torch.empty(0, dtype=torch.long, device=state.device) for edge in self.edge_types},
+            edge_attr_dict={edge: state.new_empty(0, 2) for edge in self.edge_types},
             batch_size=batch_size, hidden_dim=self.hidden_dim,
-            metadata={"container_only": True, "reasoning_backend": self.graph_type},
+            metadata={"container_only": True, "reasoning_backend": self.graph_type,
+                      "hypothesis_order": list(self.hypothesis_spec.order),
+                      "edge_types": list(self.edge_types)},
         )
         output = HypothesisGraphOutput(
-            hypothesis_features=state, hypothesis_mask=torch.ones(batch_size, 4, dtype=torch.bool, device=state.device),
+            hypothesis_features=state, hypothesis_mask=torch.ones(batch_size, hypothesis_count, dtype=torch.bool, device=state.device),
             graph_batch=graph, updated_node_features=x_dict,
             graph_statistics={"reasoning_backend": self.graph_type, "graph_edges_used": False,
                               "graph_build_count": 0, "dynamic_rebuild": False, "rebuild_mode": "none", "reliability_reassessment": False},

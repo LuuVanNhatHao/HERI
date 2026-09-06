@@ -57,7 +57,9 @@ def graph_statistics(graph: GraphBatch) -> dict[str, Any]:
         "mean_degree": _mean_degree(graph),
         "isolated_evidence_nodes": _isolated_evidence_nodes(graph),
         "valid_hypothesis_nodes": int(graph.x_dict[HYPOTHESIS].shape[0]),
-        "hypothesis_order": list(HYPOTHESIS_ORDER),
+        "hypothesis_order": list(
+            graph.metadata.get("hypothesis_order", HYPOTHESIS_ORDER)
+        ),
     }
 
 

@@ -120,14 +120,14 @@ def _load_thresholds(path: Path, *, checkpoint_path: Path, checkpoint: Mapping[s
                 "Threshold file does not belong to requested checkpoint: "
                 f"thresholds checkpoint={expected}, evaluation checkpoint={checkpoint_path}"
             )
+    names = tuple(data.get("hypothesis_names", ("FS", "FA", "TS", "TA")))
+    values = data.get("atomic_thresholds")
+    if values is None:
+        values = [data[f"{name.lower()}_threshold"] for name in names]
     return Thresholds(
         binary=float(data["binary_threshold"]),
-        atomic=(
-            float(data["fs_threshold"]),
-            float(data["fa_threshold"]),
-            float(data["ts_threshold"]),
-            float(data["ta_threshold"]),
-        ),
+        atomic=tuple(float(value) for value in values),
+        hypothesis_names=names,
     )
 
 
@@ -188,6 +188,9 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
     tqdm.write(reports["binary_report"])
     tqdm.write("Test attribution classification_report:")
     tqdm.write(reports["attribution_report"])
+    if reports.get("class_report"):
+        tqdm.write("Test dataset-class classification_report:")
+        tqdm.write(reports["class_report"])
     write_predictions_csv(
         bundle=bundle,
         thresholds=thresholds,
@@ -200,6 +203,8 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
         "scientific_variant": config.get("scientific_study", {}).get("variant"),
         "run_id": run_id,
         "model_name": config["project"]["name"],
+        "dataset_name": config["dataset"]["name"],
+        "dataset_root": config["dataset"]["root"],
         "architecture_version": config["project"]["architecture_version"],
         "image_grounding_protocol": "dense_bbox",
         "baseline_type": config["model"]["baseline_type"],

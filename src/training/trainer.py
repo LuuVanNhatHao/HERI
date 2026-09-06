@@ -21,7 +21,7 @@ from src.evaluation.evaluator import (
 )
 from src.losses.baseline_losses import BaselineMultitaskLoss
 from src.models.baselines import build_baseline_model
-from src.thresholding.tuner import DEFAULT_THRESHOLDS, tune_thresholds
+from src.thresholding.tuner import Thresholds, default_thresholds_for_hypotheses, tune_thresholds
 from src.training.checkpoint import (
     restore_checkpoint,
     save_checkpoint,
@@ -168,7 +168,14 @@ class BaselineTrainer:
             max_samples=smoke.get("val_max_samples"),
             samples_per_class=smoke.get("samples_per_class"),
         )
-        self.state = TrainingState()
+        hypothesis_names = tuple(
+            config.get("model", {}).get("hypotheses", {}).get(
+                "order", ("FS", "FA", "TS", "TA")
+            )
+        )
+        self.state = TrainingState(
+            thresholds=default_thresholds_for_hypotheses(hypothesis_names)
+        )
         self.history_path = self.run_dir / "metrics" / "history.csv"
         self._lazy_initialized = False
         self._active_stage: str | None = None
@@ -294,10 +301,22 @@ class BaselineTrainer:
                 atomic_scores=torch.tensor(val_bundle.atomic_scores).numpy(),
                 config=self.config["thresholding"],
                 progress=self.progress,
+                hypothesis_names=tuple(
+                    self.config["model"].get("hypotheses", {}).get(
+                        "order", ("FS", "FA", "TS", "TA")
+                    )
+                ),
             )
             self.state.thresholds = thresholds
             reports = compute_metrics_and_reports(val_bundle, thresholds)
-            default_reports = compute_metrics_and_reports(val_bundle, DEFAULT_THRESHOLDS)
+            default_reports = compute_metrics_and_reports(
+                val_bundle,
+                Thresholds(
+                    binary=0.5,
+                    atomic=(0.5,) * len(thresholds.atomic),
+                    hypothesis_names=thresholds.hypothesis_names,
+                ),
+            )
             tqdm.write("Validation binary classification_report:")
             tqdm.write(reports["binary_report"])
             tqdm.write("Validation attribution classification_report:")

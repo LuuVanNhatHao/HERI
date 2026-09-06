@@ -16,7 +16,7 @@ from .builder import HypothesisEvidenceGraphBuilder
 from .hgt import HGTGraphEncoder
 from .hypotheses import HypothesisNodeInitializer
 from .outputs import HypothesisGraphOutput
-from .schema import HYPOTHESIS, HYPOTHESIS_ORDER
+from .schema import HYPOTHESIS, HypothesisSpec
 from .schema import TEXT_ALIGNMENT, TEXT_CONTEXT, VISUAL_FORENSIC, VISUAL_SEMANTIC
 from .validation import graph_statistics
 
@@ -36,6 +36,7 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         if self.graph_type == "gatv2" and self.evidence_mode != "heterogeneous":
             raise ValueError("The GATv2 ablation cannot be combined with homogeneous_evidence")
         self.hidden_dim = int(config["hidden_dim"])
+        self.hypothesis_spec = HypothesisSpec.from_mapping(config.get("hypotheses"))
         self.cycles = int(config["reasoning"]["cycles"])
         if self.cycles < 1 or self.cycles > 3:
             raise ValueError("Graph reasoning cycles must be in the supported study range [1,3]")
@@ -53,6 +54,7 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             "layers": int(config["layers"]),
             "heads": int(config["heads"]),
             "dropout": float(config["dropout"]),
+            "edge_types": self.builder.edge_types,
         }
         if self.graph_type == "gatv2":
             self.gatv2 = GATv2GraphEncoder(**encoder_kwargs)
@@ -67,8 +69,14 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "HypothesisEvidenceGraphReasoner":
         """Build from a top-level YAML config."""
-
-        return cls(config["graph"])
+        graph_config = dict(config["graph"])
+        graph_config["hypotheses"] = dict(
+            config["model"].get(
+                "hypotheses",
+                {"order": ["FS", "FA", "TS", "TA"], "image": ["FS", "FA"], "text": ["TS", "TA"]},
+            )
+        )
+        return cls(graph_config)
 
     def forward(self, evidence: HeterogeneousEvidenceBatch) -> HypothesisGraphOutput:
         """Return graph-derived FS/FA/TS/TA embeddings, not logits."""
@@ -105,7 +113,10 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
                 )
             encoder = getattr(self, self._encoder_name)
             x_dict = encoder(graph.x_dict, graph.edge_index_dict, graph.edge_attr_dict)
-            current_hypotheses = _unflatten_hypotheses(x_dict[HYPOTHESIS], batch_size=batch_size)
+            current_hypotheses = _unflatten_hypotheses(
+                x_dict[HYPOTHESIS], batch_size=batch_size,
+                hypothesis_count=len(self.hypothesis_spec.order),
+            )
             intermediate.append(current_hypotheses)
             current_evidence = _refined_evidence_batch(current_evidence, graph, x_dict)
             cycle_statistics.append(graph_statistics(graph))
@@ -116,7 +127,7 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             hypothesis_features=hypothesis_features,
             hypothesis_mask=torch.ones(
                 batch_size,
-                len(HYPOTHESIS_ORDER),
+                len(self.hypothesis_spec.order),
                 dtype=torch.bool,
                 device=hypothesis_features.device,
             ),
@@ -180,10 +191,12 @@ def _reuse_static_graph(
     return reused
 
 
-def _unflatten_hypotheses(features: torch.Tensor, *, batch_size: int) -> torch.Tensor:
-    if features.shape[0] != batch_size * len(HYPOTHESIS_ORDER):
-        raise ValueError("Flattened hypothesis features must contain B*4 rows")
-    return features.reshape(batch_size, len(HYPOTHESIS_ORDER), features.shape[-1])
+def _unflatten_hypotheses(
+    features: torch.Tensor, *, batch_size: int, hypothesis_count: int = 4
+) -> torch.Tensor:
+    if features.shape[0] != batch_size * hypothesis_count:
+        raise ValueError(f"Flattened hypothesis features must contain B*{hypothesis_count} rows")
+    return features.reshape(batch_size, hypothesis_count, features.shape[-1])
 
 
 def _refined_evidence_set(

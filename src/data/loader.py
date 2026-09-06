@@ -12,8 +12,9 @@ from torch.utils.data import DataLoader
 
 from src.utils.config import get_key, require_key
 
-from .collate import dgm4_collate
+from .collate import multimodal_collate
 from .dataset import DGM4Dataset
+from .samm import SAMMDataset
 from .sampler import IDAwareSampler
 
 
@@ -56,6 +57,51 @@ def create_dgm4_dataset(
     )
 
 
+def create_dataset(
+    config: Mapping[str, Any],
+    *,
+    split: str,
+    tokenizer: Any | None = None,
+    max_samples: int | None = None,
+    samples_per_class: int | None = None,
+) -> DGM4Dataset | SAMMDataset:
+    """Create the configured normalized dataset without branching in the model."""
+
+    dataset_name = str(get_key(config, "dataset.name", "DGM4")).strip().upper()
+    if dataset_name == "DGM4":
+        return create_dgm4_dataset(
+            config, split=split, tokenizer=tokenizer, max_samples=max_samples,
+            samples_per_class=samples_per_class,
+        )
+    if dataset_name == "SAMM":
+        return SAMMDataset.from_annotation_file(
+            annotation_path=_annotation_path(config, split),
+            split=split,
+            dataset_root=require_key(config, "dataset.root"),
+            image_root=require_key(config, "dataset.image_root"),
+            image_size=int(require_key(config, "image.size")),
+            tokenizer=tokenizer,
+            tokenizer_max_length=int(require_key(config, "tokenizer.max_length")),
+            tokenizer_ignore_index=int(require_key(config, "tokenizer.ignore_index")),
+            verify_schema=bool(get_key(config, "preflight.verify_schema", False)),
+            verify_image_exists=bool(get_key(config, "dataset.verify_image_exists", True)),
+            progress=bool(get_key(config, "progress.enabled", True)),
+            clip_out_of_bounds_boxes=bool(
+                get_key(config, "dataset.annotation_policy.clip_boxes", True)
+            ),
+            mask_missing_image_boxes=bool(
+                get_key(config, "dataset.annotation_policy.mask_missing_image_boxes", True)
+            ),
+            mask_invalid_text_positions=bool(
+                get_key(config, "dataset.annotation_policy.mask_invalid_text_positions", True)
+            ),
+            jpeg_draft=bool(get_key(config, "dataset.jpeg_draft", True)),
+            max_samples=max_samples,
+            samples_per_class=samples_per_class,
+        )
+    raise ValueError(f"Unsupported dataset.name={dataset_name!r}; expected DGM4 or SAMM")
+
+
 def create_dataloader(
     config: Mapping[str, Any],
     *,
@@ -66,7 +112,7 @@ def create_dataloader(
 ) -> DataLoader:
     """Create a PyTorch DataLoader from YAML configuration."""
 
-    dataset = create_dgm4_dataset(
+    dataset = create_dataset(
         config,
         split=split,
         tokenizer=tokenizer,
@@ -96,7 +142,7 @@ def create_dataloader(
         "num_workers": num_workers,
         "pin_memory": pin_memory,
         "drop_last": drop_last,
-        "collate_fn": dgm4_collate,
+        "collate_fn": multimodal_collate,
         "generator": torch.Generator().manual_seed(seed),
     }
     if num_workers > 0:

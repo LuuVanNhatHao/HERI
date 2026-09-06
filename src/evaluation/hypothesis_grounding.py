@@ -10,21 +10,26 @@ from src.models.hera.outputs import HERADecisionOutput
 def grounding_route_weights(
     atomic_probabilities: torch.Tensor,
     *,
-    start: int,
+    start: int | None = None,
+    indices: tuple[int, ...] | None = None,
     mode: str,
     temperature: float = 1.0,
 ) -> torch.Tensor:
-    """Return target-free weights for an adjacent pair of manipulation hypotheses."""
+    """Return target-free weights for configured grounding hypotheses."""
 
-    if atomic_probabilities.ndim != 2 or atomic_probabilities.shape[1] != 4:
-        raise ValueError("atomic_probabilities must be [B,4]")
-    if start not in (0, 2):
-        raise ValueError("grounding hypothesis pair must start at 0 (image) or 2 (text)")
-    pair = atomic_probabilities[:, start : start + 2].clamp_min(1e-8)
+    if atomic_probabilities.ndim != 2 or atomic_probabilities.shape[1] < 1:
+        raise ValueError("atomic_probabilities must be [B,K]")
+    if indices is None:
+        if start not in (0, 2):
+            raise ValueError("legacy grounding route start must be 0 or 2")
+        indices = (start, start + 1)
+    if not indices or min(indices) < 0 or max(indices) >= atomic_probabilities.shape[1]:
+        raise ValueError("grounding hypothesis indices are invalid")
+    pair = atomic_probabilities[:, list(indices)].clamp_min(1e-8)
     normalized_mode = str(mode).lower()
     if normalized_mode == "hard":
-        indices = pair.argmax(dim=1)
-        return torch.nn.functional.one_hot(indices, num_classes=2).to(pair.dtype)
+        selected = pair.argmax(dim=1)
+        return torch.nn.functional.one_hot(selected, num_classes=pair.shape[1]).to(pair.dtype)
     if normalized_mode != "soft":
         raise ValueError("grounding routing mode must be soft or hard")
     if float(temperature) <= 0:
@@ -35,12 +40,12 @@ def grounding_route_weights(
 def route_image_grounding_boxes(
     output: HERADecisionOutput,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Aggregate FS/FA boxes using only the model's predicted atomic probabilities."""
+    """Aggregate configured image boxes using predicted atomic probabilities only."""
 
     mode, temperature = _routing_config(output)
     weights = grounding_route_weights(
         output.atomic_probabilities,
-        start=0,
+        indices=tuple(output.metadata.get("image_hypothesis_indices", (0, 1))),
         mode=mode,
         temperature=temperature,
     )
@@ -51,12 +56,12 @@ def route_image_grounding_boxes(
 def route_text_grounding_probabilities(
     output: HERADecisionOutput,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Aggregate TS/TA token probabilities without consulting target labels."""
+    """Aggregate configured token probabilities without consulting target labels."""
 
     mode, temperature = _routing_config(output)
     weights = grounding_route_weights(
         output.atomic_probabilities,
-        start=2,
+        indices=tuple(output.metadata.get("text_hypothesis_indices", (2, 3))),
         mode=mode,
         temperature=temperature,
     )

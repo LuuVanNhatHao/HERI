@@ -13,16 +13,43 @@ class ConfigError(ValueError):
 
 
 def load_yaml_config(config_path: str | Path) -> dict[str, Any]:
-    """Load a YAML config as a dictionary."""
+    """Load YAML, optionally deep-merging a relative ``_base_`` config."""
 
     path = Path(config_path)
+    return _load_yaml_config(path, stack=())
+
+
+def _load_yaml_config(path: Path, *, stack: tuple[Path, ...]) -> dict[str, Any]:
     if not path.exists():
         raise ConfigError(f"Config file does not exist: {path}")
+    resolved = path.resolve()
+    if resolved in stack:
+        raise ConfigError(f"Cyclic YAML _base_ chain: {resolved}")
     with path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
     if not isinstance(data, dict):
         raise ConfigError(f"Config root must be a mapping: {path}")
-    return data
+    base_value = data.pop("_base_", None)
+    if base_value is None:
+        return data
+    if not isinstance(base_value, str) or not base_value.strip():
+        raise ConfigError(f"_base_ must be a non-empty relative path: {path}")
+    base_path = Path(base_value)
+    if not base_path.is_absolute():
+        base_path = path.parent / base_path
+    base = _load_yaml_config(base_path, stack=(*stack, resolved))
+    return _deep_merge(base, data)
+
+
+def _deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        previous = result.get(key)
+        if isinstance(previous, Mapping) and isinstance(value, Mapping):
+            result[key] = _deep_merge(previous, value)
+        else:
+            result[key] = value
+    return result
 
 
 def require_key(config: Mapping[str, Any], dotted_key: str) -> Any:
@@ -45,6 +72,86 @@ def get_key(config: Mapping[str, Any], dotted_key: str, default: Any = None) -> 
             return default
         current = current[part]
     return current
+
+
+_DATASET_PATHS = {
+    "DGM4": ("data/DGM4", "data/DGM4/images"),
+    "SAMM": ("data/SAMM", "data/SAMM/images"),
+}
+
+_SAMM_ANNOTATION_HASHES = {
+    "train": "86ddcace282a029633446ca382523a3867ac2238b846182dda956113283dcbd5",
+    "val": "dd5663c7775024bc14741ccb58efba37a0b9033c926365f960756692ea041df0",
+    "test": "2c4d43a67b00ad85805c0ece348433d0a485f138b28344cca002d66957d14552",
+}
+
+
+def _dataset_name(config: Mapping[str, Any]) -> str:
+    name = str(get_key(config, "dataset.name", "DGM4")).strip().upper()
+    if name not in _DATASET_PATHS:
+        raise ConfigError(f"dataset.name must be one of {sorted(_DATASET_PATHS)}, got {name!r}")
+    return name
+
+
+def _validate_dataset_paths(config: Mapping[str, Any]) -> str:
+    name = _dataset_name(config)
+    expected_root, expected_images = _DATASET_PATHS[name]
+    root = Path(str(require_key(config, "dataset.root"))).as_posix()
+    image_root = Path(str(require_key(config, "dataset.image_root"))).as_posix()
+    if root != expected_root:
+        raise ConfigError(f"{name} dataset.root must be the canonical value: {expected_root}")
+    if image_root != expected_images:
+        raise ConfigError(f"{name} dataset.image_root must be the canonical value: {expected_images}")
+    for split in ("train", "val", "test"):
+        key = f"{split}_annotations"
+        expected = f"{expected_root}/{split}.json"
+        actual = Path(str(require_key(config, f"dataset.{key}"))).as_posix()
+        if actual != expected:
+            raise ConfigError(f"{name} dataset.{key} must be the canonical value: {expected}")
+    if name == "SAMM":
+        for policy in (
+            "clip_boxes",
+            "mask_missing_image_boxes",
+            "mask_invalid_text_positions",
+        ):
+            if not bool(require_key(config, f"dataset.annotation_policy.{policy}")):
+                raise ConfigError(
+                    f"SAMM dataset.annotation_policy.{policy} must be true for the frozen protocol"
+                )
+        configured_hashes = require_key(config, "dataset_hashes")
+        if not isinstance(configured_hashes, Mapping) or {
+            key: str(configured_hashes.get(key, "")) for key in _SAMM_ANNOTATION_HASHES
+        } != _SAMM_ANNOTATION_HASHES:
+            raise ConfigError("SAMM dataset_hashes do not match the frozen seed777 protocol")
+    return name
+
+
+def _validate_hypothesis_ontology(config: Mapping[str, Any]) -> None:
+    name = _dataset_name(config)
+    hypotheses = require_key(config, "model.hypotheses")
+    if not isinstance(hypotheses, Mapping):
+        raise ConfigError("model.hypotheses must be a mapping")
+    expected = {
+        "DGM4": {
+            "order": ["FS", "FA", "TS", "TA"],
+            "image": ["FS", "FA"],
+            "text": ["TS", "TA"],
+        },
+        "SAMM": {
+            "order": ["SWAP", "ATTRIBUTE"],
+            "image": ["SWAP", "ATTRIBUTE"],
+            "text": ["SWAP", "ATTRIBUTE"],
+        },
+    }[name]
+    actual_order = list(hypotheses.get("order", []))
+    actual_image = list(hypotheses.get("image", expected["image"]))
+    actual_text = list(hypotheses.get("text", expected["text"]))
+    actual = {"order": actual_order, "image": actual_image, "text": actual_text}
+    if actual != expected:
+        raise ConfigError(
+            f"{name} ontology must be {expected}, got {actual}. "
+            "Ontology changes require an explicit controlled experiment."
+        )
 
 
 def validate_prepare_config(config: Mapping[str, Any]) -> None:
@@ -85,10 +192,7 @@ def validate_prepare_config(config: Mapping[str, Any]) -> None:
     )
     for key in mandatory:
         require_key(config, key)
-    if Path(str(require_key(config, "dataset.root"))).as_posix() != "data/DGM4":
-        raise ConfigError("dataset.root must be the canonical value: data/DGM4")
-    if Path(str(require_key(config, "dataset.image_root"))).as_posix() != "data/DGM4/images":
-        raise ConfigError("dataset.image_root must be the canonical value: data/DGM4/images")
+    _validate_dataset_paths(config)
     if int(require_key(config, "image.size")) != 384:
         raise ConfigError("image.size must be the canonical Phase-1 value: 384")
     if not bool(require_key(config, "image.preserve_aspect_ratio")):
@@ -226,10 +330,9 @@ def validate_baseline_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("Unknown baseline binary_aggregation")
     if aggregation == "noisy_or" and config["model"]["baseline_type"] != "b1_cross_attention":
         raise ConfigError("The noisy-OR baseline control is implemented for B1 only")
-    if Path(str(require_key(config, "dataset.root"))).as_posix() != "data/DGM4":
-        raise ConfigError("dataset.root must be the canonical value: data/DGM4")
-    if Path(str(require_key(config, "dataset.image_root"))).as_posix() != "data/DGM4/images":
-        raise ConfigError("dataset.image_root must be the canonical value: data/DGM4/images")
+    _validate_dataset_paths(config)
+    if _dataset_name(config) == "SAMM":
+        _validate_hypothesis_ontology(config)
     if int(require_key(config, "image.size")) != 384:
         raise ConfigError("image.size must be the canonical Phase-2 value: 384")
     if not bool(require_key(config, "image.preserve_aspect_ratio")):
@@ -385,10 +488,7 @@ def validate_evidence_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError(f"Unknown evidence config mode: {mode!r}")
     for key in mandatory:
         require_key(config, key)
-    if Path(str(require_key(config, "dataset.root"))).as_posix() != "data/DGM4":
-        raise ConfigError("dataset.root must be the canonical value: data/DGM4")
-    if Path(str(require_key(config, "dataset.image_root"))).as_posix() != "data/DGM4/images":
-        raise ConfigError("dataset.image_root must be the canonical value: data/DGM4/images")
+    _validate_dataset_paths(config)
     if int(require_key(config, "image.size")) != 384:
         raise ConfigError("image.size must be the canonical Phase-3 value: 384")
     if not bool(require_key(config, "image.preserve_aspect_ratio")):
@@ -798,8 +898,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
     _validate_common_canonical_data_and_backbones(config, phase_name="Phase-7")
     if str(require_key(config, "model.model_type")) != "hera":
         raise ConfigError("model.model_type must be hera for canonical Phase-7 HERA")
-    if list(require_key(config, "model.hypotheses.order")) != ["FS", "FA", "TS", "TA"]:
-        raise ConfigError("model.hypotheses.order must be ['FS', 'FA', 'TS', 'TA']")
+    _validate_hypothesis_ontology(config)
     hidden_dim = int(require_key(config, "model.hidden_dim"))
     for key in ("evidence.hidden_dim", "routing.feature_dim", "graph.hidden_dim", "model.attribution.hidden_dim"):
         if int(require_key(config, key)) != hidden_dim:
@@ -1012,10 +1111,7 @@ def validate_server_validation_config(config: Mapping[str, Any]) -> None:
 
 
 def _validate_common_canonical_data_and_backbones(config: Mapping[str, Any], *, phase_name: str) -> None:
-    if Path(str(require_key(config, "dataset.root"))).as_posix() != "data/DGM4":
-        raise ConfigError("dataset.root must be the canonical value: data/DGM4")
-    if Path(str(require_key(config, "dataset.image_root"))).as_posix() != "data/DGM4/images":
-        raise ConfigError("dataset.image_root must be the canonical value: data/DGM4/images")
+    _validate_dataset_paths(config)
     if int(require_key(config, "image.size")) != 384:
         raise ConfigError(f"image.size must be the canonical {phase_name} value: 384")
     if not bool(require_key(config, "image.preserve_aspect_ratio")):

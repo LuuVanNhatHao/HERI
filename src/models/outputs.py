@@ -84,8 +84,14 @@ class BaselineOutput:
         batch = self.binary_logit.shape[0]
         if self.binary_logit.shape != (batch,):
             raise ValueError(f"binary_logit must be [B], got {tuple(self.binary_logit.shape)}")
-        if self.atomic_logits.shape != (batch, 4):
-            raise ValueError(f"atomic_logits must be [B,4], got {tuple(self.atomic_logits.shape)}")
+        expected = self.metadata.get("hypothesis_order")
+        hypotheses = len(expected) if expected else self.atomic_logits.shape[1]
+        if self.atomic_logits.shape != (batch, hypotheses) or hypotheses < 1:
+            raise ValueError(
+                f"atomic_logits must be [B,{hypotheses}], got {tuple(self.atomic_logits.shape)}"
+            )
+        if self.atomic_probabilities.shape != self.atomic_logits.shape:
+            raise ValueError("atomic_probabilities must align with atomic_logits")
         if self.image_grounding_logits.shape != self.image_grounding_mask.shape:
             raise ValueError("image grounding logits/mask shape mismatch")
         if self.image_grounding_boxes.shape != (batch, 4):
