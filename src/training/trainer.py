@@ -59,6 +59,7 @@ from src.training.scheduler import (
     create_scheduler_plan,
 )
 from src.training.state import TrainingState
+from src.training.validation_reporting import emit_validation_classification_reports
 from src.utils.config import dump_yaml
 from src.utils.environment import collect_environment_metadata
 
@@ -317,10 +318,11 @@ class BaselineTrainer:
                     hypothesis_names=thresholds.hypothesis_names,
                 ),
             )
-            tqdm.write("Validation binary classification_report:")
-            tqdm.write(reports["binary_report"])
-            tqdm.write("Validation attribution classification_report:")
-            tqdm.write(reports["attribution_report"])
+            emit_validation_classification_reports(
+                reports,
+                epoch=epoch,
+                metrics_dir=self.run_dir / "metrics",
+            )
             tqdm.write(f"Validation thresholds: {thresholds.as_dict()}")
             early_stop = self._update_early_stopping(reports["metrics"])
             epoch_metrics = {
