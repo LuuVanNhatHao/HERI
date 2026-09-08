@@ -812,6 +812,7 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         "model.grounding.routing",
         "model.grounding.routing_temperature",
         "model.grounding.text.scoring",
+        "model.grounding.text.aggregation",
         "model.grounding.text.dropout",
         "model.grounding.text.full_token_store",
         "model.grounding.text.token_input_dim",
@@ -977,6 +978,18 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("model.binary.aggregation must be noisy_or or independent_head")
     if not bool(require_key(config, "model.grounding.text.full_token_store")):
         raise ConfigError("model.grounding.text.full_token_store must be true")
+    text_grounding_aggregation = str(
+        require_key(config, "model.grounding.text.aggregation")
+    )
+    if text_grounding_aggregation not in {
+        "relative_soft",
+        "presence_gated",
+        "token_noisy_or",
+    }:
+        raise ConfigError(
+            "model.grounding.text.aggregation must be relative_soft, "
+            "presence_gated, or token_noisy_or"
+        )
     freeze_epochs = int(require_key(config, "training.stages.stage_a_freeze_epochs"))
     full_unfreeze_enabled = bool(require_key(config, "training.stages.stage_b_full_unfreeze.enabled"))
     full_unfreeze_start = int(require_key(config, "training.stages.stage_b_full_unfreeze.start_epoch"))

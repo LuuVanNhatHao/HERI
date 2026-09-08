@@ -169,6 +169,7 @@ model:
       scoring: dot_product
       dropout: 0.1
     text:
+      aggregation: presence_gated
       scoring: dot_product
       dropout: 0.1
       full_token_store: true

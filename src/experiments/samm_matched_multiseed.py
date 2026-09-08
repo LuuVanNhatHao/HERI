@@ -666,6 +666,11 @@ def _validate_summary(
             raise ValueError(f"Summary is not canonical HERA: {path}")
     elif row.get("ablation_variant") != job.variant:
         raise ValueError(f"Summary ablation mismatch for {job.variant}: {path}")
+    if job.variant != "b1" and row.get("text_grounding_aggregation") != "presence_gated":
+        raise ValueError(
+            "HERA SAMM summary does not use canonical presence_gated text grounding: "
+            f"{path}"
+        )
     return row
 
 

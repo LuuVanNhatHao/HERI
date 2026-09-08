@@ -17,11 +17,19 @@ def test_phase7_hera_yaml_configs_validate() -> None:
         assert config["dataset"]["root"] == "data/DGM4"
         assert config["model"]["model_type"] == "hera"
         assert config["model"]["binary"]["aggregation"] == "noisy_or"
+        assert config["model"]["grounding"]["text"]["aggregation"] == "presence_gated"
         assert "lambda_ev" in config["loss"]
         stages = config["training"]["stages"]
         assert stages["stage_b_full_unfreeze"]["enabled"] is True
         assert stages["stage_b_full_unfreeze"]["start_epoch"] == stages["stage_a_freeze_epochs"] + 1
         assert "stage_b_unfreeze_last_blocks" not in stages
+
+
+def test_canonical_hera_rejects_unknown_text_grounding_aggregation() -> None:
+    config = load_yaml_config("config/train_hera.yaml")
+    config["model"]["grounding"]["text"]["aggregation"] = "oracle"
+    with pytest.raises(ConfigError, match="text.aggregation"):
+        validate_hera_config(config, mode="train")
 
 
 def test_canonical_hera_rejects_disabled_or_delayed_full_finetuning() -> None:

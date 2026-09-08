@@ -339,11 +339,13 @@ def _accumulate_text_counts(
         else available.detach().cpu().to(torch.bool)
     )
     if hasattr(output, "text_grounding_probabilities"):
+        bundle.text_grounding_aggregation = text_grounding_aggregation
         probs, _ = route_text_grounding_probabilities(
             output, aggregation=text_grounding_aggregation
         )
         probs = probs.detach().cpu()
     else:
+        bundle.text_grounding_aggregation = "generic_head"
         probs = torch.sigmoid(logits)
     for sample_idx in range(logits.shape[0]):
         sample_probs = probs[sample_idx]

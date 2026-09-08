@@ -46,13 +46,9 @@ suite:
   # CSVs pass full dataset/hash/seed/variant/row-count validation.
   reuse_summaries:
     hera:
-      42: outputs/samm/hera_eval/samm_hera_test_evaluation/summary.csv
+      42: outputs/samm/hera_eval/samm_hera_seed42_presence_gated_test/summary.csv
     b1:
       42: outputs/samm/baseline_b1_eval/samm_baseline_b1_test_evaluation/summary.csv
-    no_router:
-      42: outputs/samm/key_ablations/no_router/evaluation/hera_no_router_test/summary.csv
-    generic_grounding:
-      42: outputs/samm/key_ablations/generic_grounding/evaluation/hera_generic_grounding_test/summary.csv
 
   retention:
     minimum_free_gib_before_train: 55

@@ -327,6 +327,9 @@ class HERATrainer:
                 max_batches=max_val_batches,
                 desc=f"Epoch {epoch} validation",
                 progress=self.progress,
+                text_grounding_aggregation=str(
+                    self.config["model"]["grounding"]["text"]["aggregation"]
+                ),
             )
             thresholds = tune_thresholds(
                 binary_targets=torch.tensor(val_bundle.binary_targets).numpy(),

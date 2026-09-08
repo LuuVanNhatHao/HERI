@@ -169,6 +169,9 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         max_batches=config["runtime"].get("max_test_batches"),
         desc=f"{config['evaluation']['split']} inference",
         progress=bool(config["progress"]["enabled"]),
+        text_grounding_aggregation=str(
+            config["model"]["grounding"]["text"]["aggregation"]
+        ),
     )
     reports = compute_metrics_and_reports(bundle, thresholds)
     intervention_config = config["evaluation"].get("image_deletion", {})
@@ -227,6 +230,9 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         "architecture_version": config["project"]["architecture_version"],
         "image_grounding_protocol": config["model"]["grounding"]["image"]["protocol"],
         "grounding_routing": config["model"]["grounding"]["routing"],
+        "text_grounding_aggregation": config["model"]["grounding"]["text"][
+            "aggregation"
+        ],
         "graph_reasoning_cycles": config["graph"]["reasoning"]["cycles"],
         "dynamic_graph_rebuild": config["graph"]["reasoning"]["dynamic_rebuild"],
         "graph_rebuild_mode": cycle_protocol["rebuild_mode"],

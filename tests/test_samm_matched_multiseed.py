@@ -63,6 +63,9 @@ def _write_summary(
         "ablation_variant": (
             "" if variant == "b1" else "canonical" if variant == "hera" else variant
         ),
+        "text_grounding_aggregation": (
+            "generic_head" if variant == "b1" else "presence_gated"
+        ),
         "class_macro_f1": class_macro_f1,
         "class_accuracy": class_macro_f1 - 0.01,
         "acc": class_macro_f1 - 0.02,
@@ -140,6 +143,10 @@ def test_materializes_twelve_isolated_matched_jobs(tmp_path: Path) -> None:
         else:
             expected = None if job.variant == "hera" else job.variant
             assert get_hera_ablation_variant(train) == expected
+            assert (
+                evaluate["model"]["grounding"]["text"]["aggregation"]
+                == "presence_gated"
+            )
 
 
 def test_selection_preserves_manifest_order_and_rejects_unknown(tmp_path: Path) -> None:

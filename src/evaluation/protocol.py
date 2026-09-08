@@ -11,6 +11,7 @@ def protocol_metadata() -> dict[str, str]:
         "text_f1_definition": "all_samples_native_subwords_visible_after_truncation",
         "text_word_f1_definition": "all_samples_original_words_missing_predictions_are_negative",
         "text_f1_positive_only_definition": "text_manipulated_samples_visible_words_max_over_subwords",
+        "text_grounding_aggregation_definition": "target_free_configured_hypothesis_presence_aggregation",
         "image_mean_iou_definition": "all_samples_raw_boxes_empty_target_match_epsilon_1e-4",
         "grounding_comparability": "native_tokenizer_and_preprocessing_not_identical_to_HAMMER",
     }
