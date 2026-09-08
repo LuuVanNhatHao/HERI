@@ -32,12 +32,14 @@ from src.training.hera_trainer import (
     _assert_stage_b_backbones_fully_trainable,
     _backbone_adaptation_start_epoch,
     _checkpoint_total_epochs,
+    _completed_checkpoint_best_path,
     _cuda_memory_postfix,
     _cuda_memory_summary,
     _early_stopping_improved,
     _early_stopping_status,
     _effective_batch_size,
     _first_parameter_device,
+    _load_hera_resume_payload,
     _persist_resume_config_snapshots,
     _recover_early_stopping_state,
     _selection_score_tuple,
@@ -202,8 +204,15 @@ class BaselineTrainer:
         resume_payload: dict[str, Any] | None = None
         start_epoch = 1
         resume_checkpoint_epoch: int | None = None
+        stop_reason = "max_epochs"
         if resume_path is not None:
-            resume_payload = torch.load(resume_path, map_location="cpu", weights_only=False)
+            resume_payload, loaded_resume_path = _load_hera_resume_payload(resume_path)
+            if loaded_resume_path != resume_path:
+                tqdm.write(
+                    "Primary baseline resume checkpoint was unreadable; "
+                    f"recovered from: {loaded_resume_path}"
+                )
+                resume_path = loaded_resume_path
             checkpoint_config = resume_payload.get("config")
             if not isinstance(checkpoint_config, Mapping):
                 raise RuntimeError("Resume checkpoint does not contain its effective baseline config")
@@ -215,10 +224,20 @@ class BaselineTrainer:
             resume_checkpoint_epoch = int(resume_payload["epoch"])
             start_epoch = resume_checkpoint_epoch + 1
             if start_epoch > total_epochs:
-                raise RuntimeError(
-                    f"Resume checkpoint epoch {resume_checkpoint_epoch} already reached "
-                    f"configured total_epochs={total_epochs}"
+                best_checkpoint = _completed_checkpoint_best_path(
+                    resume_payload,
+                    run_dir=self.run_dir,
                 )
+                self.state.epoch = resume_checkpoint_epoch
+                self._write_training_completion(
+                    best_checkpoint=best_checkpoint,
+                    stop_reason="max_epochs",
+                )
+                tqdm.write(
+                    "Baseline checkpoint already reached the configured horizon; "
+                    f"reusing best checkpoint: {best_checkpoint}"
+                )
+                return best_checkpoint
             _persist_resume_config_snapshots(
                 run_dir=self.run_dir,
                 checkpoint=resume_payload,
@@ -351,6 +370,7 @@ class BaselineTrainer:
                 epoch_metrics=epoch_metrics,
             )
             if early_stop:
+                stop_reason = "early_stopping"
                 tqdm.write(
                     "Early stopping triggered: "
                     f"epoch={epoch}, "
@@ -361,7 +381,31 @@ class BaselineTrainer:
                 break
         if self.state.best_checkpoint is None:
             raise RuntimeError("Training finished without producing a best checkpoint")
+        self._write_training_completion(
+            best_checkpoint=self.state.best_checkpoint,
+            stop_reason=stop_reason,
+        )
         return self.state.best_checkpoint
+
+    def _write_training_completion(
+        self,
+        *,
+        best_checkpoint: Path,
+        stop_reason: str,
+    ) -> None:
+        """Atomically mark a baseline run complete for resumable suites."""
+
+        payload = {
+            "status": "complete",
+            "final_epoch": int(self.state.epoch),
+            "stop_reason": str(stop_reason),
+            "best_checkpoint": str(best_checkpoint),
+            "baseline_type": str(self.config["model"]["baseline_type"]),
+        }
+        destination = self.run_dir / "training_complete.json"
+        temporary = self.run_dir / ".training_complete.json.tmp"
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temporary.replace(destination)
 
     def _restore_resume_checkpoint(
         self,

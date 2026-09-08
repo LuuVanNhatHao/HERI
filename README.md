@@ -100,6 +100,36 @@ python scripts/run_hera_ablation.py \
   config/experiments/hera_samm_key_ablations.yaml
 ```
 
+For the paper's matched three-seed experiment, run all four conditions with one
+sequential command:
+
+```bash
+python scripts/run_samm_matched_multiseed.py \
+  config/experiments/samm_matched_multiseed.yaml \
+  --dry-run
+
+python scripts/run_samm_matched_multiseed.py \
+  config/experiments/samm_matched_multiseed.yaml
+```
+
+The fixed training seeds are `42`, `7`, and `21`; the SAMM split itself remains
+the frozen seed-777 protocol. Execution is seed-major and variant-minor:
+canonical HERA, same-backbone B1, `no_router`, then `generic_grounding` for each
+seed. Valid standalone seed-42 results are adopted instead of retrained. Every
+other job has an isolated run root, supports checkpoint resume after a crash,
+and is evaluated before the next job starts. On the default disk-safe policy,
+the suite deletes only its own `last.pt` and `best.pt`, and only after both the
+full 50,000-sample `summary.csv` and 50,000-row `test_predictions.csv` pass
+protocol validation. Pass `--keep-checkpoints` to disable this cleanup.
+
+The suite writes `seed_results.csv`, `variant_statistics.csv`,
+`paired_seed_deltas.csv`, and `paired_statistics.csv` under
+`outputs/samm/matched_multiseed/`. The paired tables report HERA-minus-control
+deltas at the same seed, which is the appropriate comparison for the matched
+design. Re-running the same command skips valid completed jobs and resumes an
+interrupted training run from `last.pt`, falling back to `best.pt` if a failed
+disk write left `last.pt` unreadable.
+
 After canonical HERA evaluation exists for both datasets, generate the routing
 comparison used to test whether evidence allocation changes when moving from
 DGM4 to SAMM:
