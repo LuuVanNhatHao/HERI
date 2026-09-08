@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import time
 from pathlib import Path
@@ -11,7 +12,12 @@ import torch
 from tqdm.auto import tqdm
 
 from src.data.loader import create_dataloader
-from src.evaluation.evaluator import compute_metrics_and_reports, run_inference
+from src.evaluation.evaluator import (
+    compute_metrics_and_reports,
+    run_inference,
+    run_text_grounding_diagnostic_inference,
+    text_grounding_metrics,
+)
 from src.evaluation.run import _load_thresholds
 from src.evaluation.summary import write_predictions_csv, write_summary_csv
 from src.experiments import (
@@ -262,3 +268,126 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         reports=reports,
     )
     return run_dir / "summary.csv"
+
+
+def evaluate_hera_text_grounding_diagnostic(config: Mapping[str, Any]) -> Path:
+    """Compare target-free SAMM text aggregation rules in one inference pass."""
+
+    diagnostic = config["evaluation"].get("text_grounding_diagnostic", {})
+    requested = tuple(diagnostic.get(
+        "aggregations",
+        ("relative_soft", "presence_gated", "token_noisy_or"),
+    ))
+    # Keep the released rule first so the complete bundle and reference metrics
+    # are directly comparable with the canonical evaluation artifact.
+    aggregations = tuple(dict.fromkeys(("relative_soft", *requested)))
+    output_root = Path(str(config["output"]["root"]))
+    run_id = str(
+        config["project"].get(
+            "run_id", f"text_grounding_diagnostic_{int(time.time())}"
+        )
+    )
+    run_dir = output_root / run_id
+    (run_dir / "metrics").mkdir(parents=True, exist_ok=True)
+    dump_yaml(config, run_dir / "effective_config.yaml")
+    environment = collect_environment_metadata(Path.cwd())
+    environment["backbones"] = config["backbones"]
+    (run_dir / "environment.json").write_text(
+        json.dumps(environment, indent=2, default=str), encoding="utf-8"
+    )
+
+    device = torch.device(str(config["runtime"]["device"]))
+    model = HERADGM.from_config(config, load_backbones=True).to(device)
+    if model.deberta is None or not hasattr(model.deberta, "tokenizer"):
+        raise RuntimeError("HERADGM evaluation requires an attached DeBERTa tokenizer")
+    loader = create_dataloader(
+        config,
+        split=str(config["evaluation"]["split"]),
+        tokenizer=model.deberta.tokenizer,
+        max_samples=config.get("smoke", {}).get("test_max_samples"),
+        samples_per_class=config.get("smoke", {}).get("samples_per_class"),
+    )
+    precision = PrecisionManager(
+        precision=str(config["runtime"]["precision"]), device=device
+    )
+    checkpoint_path, thresholds_path = resolve_hera_evaluation_artifacts(config)
+    tqdm.write(f"Resolved diagnostic checkpoint: {checkpoint_path}")
+    tqdm.write(f"Resolved validation thresholds: {thresholds_path}")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint_config = checkpoint.get("config")
+    if not isinstance(checkpoint_config, Mapping):
+        raise RuntimeError("Evaluation checkpoint does not contain its effective HERA config")
+    validate_hera_checkpoint_variant(config, checkpoint_config, context="Evaluation")
+    restore_checkpoint(checkpoint=checkpoint, model=model, restore_rng=False)
+    ensure_no_uninitialized_parameters(
+        model, context="HERA text-grounding diagnostic checkpoint load"
+    )
+    thresholds = _load_thresholds(
+        thresholds_path, checkpoint_path=checkpoint_path, checkpoint=checkpoint
+    )
+    primary, bundles = run_text_grounding_diagnostic_inference(
+        model=model,
+        loader=loader,
+        loss_fn=None,
+        device=device,
+        precision=precision,
+        max_batches=config["runtime"].get("max_test_batches"),
+        desc=f"{config['evaluation']['split']} text-grounding diagnostic",
+        progress=bool(config["progress"]["enabled"]),
+        aggregations=aggregations,
+    )
+    reference = compute_metrics_and_reports(primary, thresholds)
+    reference_metrics = reference["metrics"]
+    common = {
+        "diagnostic_protocol": "hera_text_grounding_absence_v1",
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "run_id": run_id,
+        "dataset_name": config["dataset"]["name"],
+        "split": config["evaluation"]["split"],
+        "seed": config["project"]["seed"],
+        "checkpoint": str(checkpoint_path),
+        "sample_count": len(primary.ids),
+        "binary_acc_reference": reference_metrics.get("acc"),
+        "binary_auc_reference": reference_metrics.get("auc"),
+        "attribution_cf1_reference": reference_metrics.get("cf1"),
+        "class_accuracy_reference": reference_metrics.get("class_accuracy"),
+        "class_macro_f1_reference": reference_metrics.get("class_macro_f1"),
+    }
+    rows = [
+        {**common, **text_grounding_metrics(bundles[mode])}
+        for mode in aggregations
+    ]
+    summary_path = run_dir / "diagnostic_summary.csv"
+    with summary_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    (run_dir / "metrics" / "diagnostic_summary.json").write_text(
+        json.dumps({"reference": common, "aggregations": rows}, indent=2, default=str),
+        encoding="utf-8",
+    )
+    (run_dir / "metrics" / "classification_reference.json").write_text(
+        json.dumps(
+            {
+                "binary": reference["binary_report_dict"],
+                "attribution": reference["attribution_report_dict"],
+                "dataset_class": reference.get("class_report_dict"),
+            },
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    tqdm.write("Text-grounding absence diagnostic (word level):")
+    tqdm.write(
+        "aggregation       all_F1  positive_F1  absent_word_FP  absent_sample_FP_rate"
+    )
+    for row in rows:
+        tqdm.write(
+            f"{row['text_grounding_aggregation']:<17} "
+            f"{float(row['text_word_f1']):>7.4f}  "
+            f"{float(row['text_f1_positive_only']):>11.4f}  "
+            f"{int(row['text_absent_word_predicted_positive_count']):>14d}  "
+            f"{float(row['text_absent_sample_false_positive_rate']):>21.4f}"
+        )
+    return summary_path

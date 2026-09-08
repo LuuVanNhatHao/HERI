@@ -201,6 +201,7 @@ def test_all_samm_configs_resolve_and_validate() -> None:
     for path, mode in (
         ("config/train_samm_hera.yaml", "train"),
         ("config/evaluate_samm_hera.yaml", "evaluate"),
+        ("config/evaluate_samm_hera_text_grounding_diagnostic.yaml", "evaluate"),
         ("config/smoke_samm_hera.yaml", "smoke"),
     ):
         config = load_yaml_config(path)

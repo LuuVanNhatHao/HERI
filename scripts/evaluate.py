@@ -8,7 +8,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.evaluation.hera_run import evaluate_hera
+from src.evaluation.hera_run import (
+    evaluate_hera,
+    evaluate_hera_text_grounding_diagnostic,
+)
 from src.evaluation.run import evaluate_baseline
 from src.utils.config import load_yaml_config, validate_baseline_config, validate_hera_config
 from src.utils.logging import setup_logging
@@ -24,7 +27,13 @@ def main() -> int:
         validate_hera_config(config, mode="evaluate")
         setup_logging(str(config["logging"]["level"]))
         set_seed(int(config["project"]["seed"]))
-        summary = evaluate_hera(config)
+        diagnostic = config.get("evaluation", {}).get(
+            "text_grounding_diagnostic", {}
+        )
+        if bool(diagnostic.get("enabled", False)):
+            summary = evaluate_hera_text_grounding_diagnostic(config)
+        else:
+            summary = evaluate_hera(config)
     else:
         validate_baseline_config(config, mode="evaluate")
         setup_logging(str(config["logging"]["level"]))

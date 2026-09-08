@@ -7,6 +7,13 @@ import torch
 from src.models.hera.outputs import HERADecisionOutput
 
 
+TEXT_GROUNDING_AGGREGATIONS = (
+    "relative_soft",
+    "presence_gated",
+    "token_noisy_or",
+)
+
+
 def grounding_route_weights(
     atomic_probabilities: torch.Tensor,
     *,
@@ -55,20 +62,58 @@ def route_image_grounding_boxes(
 
 def route_text_grounding_probabilities(
     output: HERADecisionOutput,
+    *,
+    aggregation: str = "relative_soft",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Aggregate configured token probabilities without consulting target labels."""
+    """Aggregate configured token probabilities without consulting target labels.
+
+    ``relative_soft`` is the released HERA rule and is retained as the default
+    for exact backward compatibility.  It normalizes the relevant atomic
+    probabilities to sum to one, so it selects *which* hypothesis explains a
+    token but does not represent whether any text manipulation is present.
+
+    ``presence_gated`` multiplies that relative mixture by the target-free
+    Noisy-OR probability that at least one text hypothesis is present.
+
+    ``token_noisy_or`` treats each hypothesis probability as an absolute gate
+    on its token probabilities and combines the gated heads with Noisy-OR.
+    """
 
     mode, temperature = _routing_config(output)
+    normalized_aggregation = str(aggregation).strip().lower()
+    if normalized_aggregation not in TEXT_GROUNDING_AGGREGATIONS:
+        raise ValueError(
+            "text grounding aggregation must be one of "
+            f"{TEXT_GROUNDING_AGGREGATIONS}, got {aggregation!r}"
+        )
+    indices = tuple(output.metadata.get("text_hypothesis_indices", (2, 3)))
     weights = grounding_route_weights(
         output.atomic_probabilities,
-        indices=tuple(output.metadata.get("text_hypothesis_indices", (2, 3))),
+        indices=indices,
         mode=mode,
         temperature=temperature,
     )
-    probabilities = torch.sum(
-        weights.unsqueeze(-1) * output.text_grounding_probabilities,
-        dim=1,
+    head_probabilities = output.text_grounding_probabilities
+    if head_probabilities.ndim != 3:
+        raise ValueError("text_grounding_probabilities must be [B,H,L]")
+    if head_probabilities.shape[:2] != weights.shape:
+        raise ValueError(
+            "text grounding heads must align with configured text hypotheses"
+        )
+    relative_mixture = torch.sum(
+        weights.unsqueeze(-1) * head_probabilities, dim=1
     )
+    if normalized_aggregation == "relative_soft":
+        probabilities = relative_mixture
+    else:
+        atomic_presence = output.atomic_probabilities[:, list(indices)].clamp(0.0, 1.0)
+        if normalized_aggregation == "presence_gated":
+            presence = 1.0 - torch.prod(1.0 - atomic_presence, dim=1)
+            probabilities = presence.unsqueeze(-1) * relative_mixture
+        else:
+            gated_heads = atomic_presence.unsqueeze(-1) * head_probabilities
+            probabilities = 1.0 - torch.prod(1.0 - gated_heads, dim=1)
+    probabilities = probabilities.clamp(0.0, 1.0)
     return probabilities, weights
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -24,6 +24,7 @@ from src.thresholding.tuner import Thresholds
 from src.training.precision import PrecisionManager
 from src.evaluation.protocol import protocol_metadata
 from src.evaluation.hypothesis_grounding import (
+    TEXT_GROUNDING_AGGREGATIONS,
     route_image_grounding_boxes,
     route_text_grounding_probabilities,
 )
@@ -75,6 +76,15 @@ class PredictionBundle:
     text_unseen_positive_words: int = 0
     text_coverage_complete: bool = True
     text_token_count: int = 0
+    text_evaluated_sample_count: int = 0
+    text_manipulated_evaluated_sample_count: int = 0
+    text_absent_sample_count: int = 0
+    text_absent_sample_with_prediction_count: int = 0
+    text_absent_token_count: int = 0
+    text_absent_token_predicted_positive_count: int = 0
+    text_absent_word_count: int = 0
+    text_absent_word_predicted_positive_count: int = 0
+    text_grounding_aggregation: str = "relative_soft"
     text_sample_counts: list[dict[str, int]] = field(default_factory=list)
     text_word_probabilities: list[str] = field(default_factory=list)
     loss_sums: dict[str, float] = field(default_factory=dict)
@@ -114,11 +124,12 @@ def run_inference(
     max_batches: int | None,
     desc: str,
     progress: bool,
+    text_grounding_aggregation: str = "relative_soft",
 ) -> PredictionBundle:
     """Run split inference with tqdm and accumulate predictions."""
 
     model.eval()
-    bundle = PredictionBundle()
+    bundle = PredictionBundle(text_grounding_aggregation=text_grounding_aggregation)
     total = len(loader) if max_batches is None else min(max_batches, len(loader))
     iterator = tqdm(loader, total=total, desc=desc, disable=not progress)
     with torch.no_grad():
@@ -131,11 +142,82 @@ def run_inference(
                 if loss_fn is not None:
                     losses = loss_fn(output, batch)
                     bundle.add_loss(losses.as_dict())
-            _accumulate_batch(bundle, output, batch)
+            _accumulate_batch(
+                bundle,
+                output,
+                batch,
+                text_grounding_aggregation=text_grounding_aggregation,
+            )
     return bundle
 
 
-def _accumulate_batch(bundle: PredictionBundle, output: Any, batch: Mapping[str, Any]) -> None:
+def run_text_grounding_diagnostic_inference(
+    *,
+    model: torch.nn.Module,
+    loader: torch.utils.data.DataLoader,
+    loss_fn: Any | None,
+    device: torch.device,
+    precision: PrecisionManager,
+    max_batches: int | None,
+    desc: str,
+    progress: bool,
+    aggregations: Sequence[str] = TEXT_GROUNDING_AGGREGATIONS,
+) -> tuple[PredictionBundle, dict[str, PredictionBundle]]:
+    """Evaluate several text aggregation rules with one model forward pass.
+
+    The first aggregation receives the complete prediction bundle.  Remaining
+    bundles retain aggregate text counts only, which avoids tripling the large
+    per-sample prediction payload on SAMM-20K.
+    """
+
+    modes = tuple(dict.fromkeys(str(value).strip().lower() for value in aggregations))
+    if not modes:
+        raise ValueError("At least one text grounding aggregation is required")
+    invalid = [value for value in modes if value not in TEXT_GROUNDING_AGGREGATIONS]
+    if invalid:
+        raise ValueError(f"Unknown text grounding aggregation(s): {invalid}")
+    primary = PredictionBundle(text_grounding_aggregation=modes[0])
+    text_bundles = {
+        mode: (primary if index == 0 else PredictionBundle(text_grounding_aggregation=mode))
+        for index, mode in enumerate(modes)
+    }
+    model.eval()
+    total = len(loader) if max_batches is None else min(max_batches, len(loader))
+    iterator = tqdm(loader, total=total, desc=desc, disable=not progress)
+    with torch.no_grad():
+        for batch_index, raw_batch in enumerate(iterator, start=1):
+            if max_batches is not None and batch_index > max_batches:
+                break
+            batch = move_batch_to_device(raw_batch, device)
+            with precision.autocast():
+                output = model(batch)
+                losses = loss_fn(output, batch) if loss_fn is not None else None
+            if losses is not None:
+                primary.add_loss(losses.as_dict())
+            _accumulate_batch(
+                primary,
+                output,
+                batch,
+                text_grounding_aggregation=modes[0],
+            )
+            for mode in modes[1:]:
+                _accumulate_text_counts(
+                    text_bundles[mode],
+                    output,
+                    batch,
+                    text_grounding_aggregation=mode,
+                    store_details=False,
+                )
+    return primary, text_bundles
+
+
+def _accumulate_batch(
+    bundle: PredictionBundle,
+    output: Any,
+    batch: Mapping[str, Any],
+    *,
+    text_grounding_aggregation: str = "relative_soft",
+) -> None:
     binary_scores = output.binary_probability.detach().cpu()
     atomic_scores = output.atomic_probabilities.detach().cpu()
     binary_targets = batch["binary_target"].detach().cpu()
@@ -181,7 +263,12 @@ def _accumulate_batch(bundle: PredictionBundle, output: Any, batch: Mapping[str,
         bundle.router_batch_summaries.append(router_batch_summary)
     _accumulate_face_size_metadata(bundle, batch)
     _accumulate_image_ious(bundle, output, batch)
-    _accumulate_text_counts(bundle, output, batch)
+    _accumulate_text_counts(
+        bundle,
+        output,
+        batch,
+        text_grounding_aggregation=text_grounding_aggregation,
+    )
 
 
 def _accumulate_image_ious(bundle: PredictionBundle, output: Any, batch: Mapping[str, Any]) -> None:
@@ -227,7 +314,14 @@ def _accumulate_image_ious(bundle: PredictionBundle, output: Any, batch: Mapping
         bundle.image_grounding_pred_ious.append(pred_iou)
 
 
-def _accumulate_text_counts(bundle: PredictionBundle, output: Any, batch: Mapping[str, Any]) -> None:
+def _accumulate_text_counts(
+    bundle: PredictionBundle,
+    output: Any,
+    batch: Mapping[str, Any],
+    *,
+    text_grounding_aggregation: str = "relative_soft",
+    store_details: bool = True,
+) -> None:
     logits = output.text_grounding_logits.detach().cpu()
     targets = batch["text_grounding_target"].detach().cpu()
     masks = output.text_grounding_mask.detach().cpu().to(torch.bool)
@@ -245,7 +339,9 @@ def _accumulate_text_counts(bundle: PredictionBundle, output: Any, batch: Mappin
         else available.detach().cpu().to(torch.bool)
     )
     if hasattr(output, "text_grounding_probabilities"):
-        probs, _ = route_text_grounding_probabilities(output)
+        probs, _ = route_text_grounding_probabilities(
+            output, aggregation=text_grounding_aggregation
+        )
         probs = probs.detach().cpu()
     else:
         probs = torch.sigmoid(logits)
@@ -253,16 +349,20 @@ def _accumulate_text_counts(bundle: PredictionBundle, output: Any, batch: Mappin
         sample_probs = probs[sample_idx]
         if not bool(available[sample_idx]):
             bundle.text_coverage_complete = False
-            bundle.text_target_word_ids.append("")
-            bundle.text_pred_word_ids.append("")
-            bundle.text_word_probabilities.append("")
-            bundle.text_sample_counts.append({
-                "word_tp": 0, "word_fp": 0, "word_fn": 0,
-                "token_tp": 0, "token_fp": 0, "token_fn": 0,
-                "words": len(batch.get("words", [[]])[sample_idx]),
-                "visible_words": 0, "unseen_positive_words": 0,
-            })
+            if store_details:
+                bundle.text_target_word_ids.append("")
+                bundle.text_pred_word_ids.append("")
+                bundle.text_word_probabilities.append("")
+                bundle.text_sample_counts.append({
+                    "word_tp": 0, "word_fp": 0, "word_fn": 0,
+                    "token_tp": 0, "token_fp": 0, "token_fn": 0,
+                    "words": len(batch.get("words", [[]])[sample_idx]),
+                    "visible_words": 0, "unseen_positive_words": 0,
+                })
             continue
+        bundle.text_evaluated_sample_count += 1
+        if bool(applies[sample_idx]):
+            bundle.text_manipulated_evaluated_sample_count += 1
         valid = masks[sample_idx] & (targets[sample_idx] >= 0)
         token_true = targets[sample_idx][valid] == 1
         token_pred = sample_probs[valid] >= 0.5
@@ -305,20 +405,28 @@ def _accumulate_text_counts(bundle: PredictionBundle, output: Any, batch: Mappin
             bundle.text_positive_tp += len(visible_targets & pred_words)
             bundle.text_positive_fp += len(pred_words - visible_targets)
             bundle.text_positive_fn += len(visible_targets - pred_words)
+        else:
+            bundle.text_absent_sample_count += 1
+            bundle.text_absent_sample_with_prediction_count += int(bool(pred_words))
+            bundle.text_absent_token_count += int(valid.sum())
+            bundle.text_absent_token_predicted_positive_count += int(token_pred.sum())
+            bundle.text_absent_word_count += word_count
+            bundle.text_absent_word_predicted_positive_count += len(pred_words)
         unseen_positive = len(target_words - visible_ids)
         bundle.text_total_words += word_count
         bundle.text_visible_words += len(visible_ids)
         bundle.text_total_positive_words += len(target_words)
         bundle.text_unseen_positive_words += unseen_positive
-        bundle.text_target_word_ids.append(json.dumps(sorted(target_words)))
-        bundle.text_pred_word_ids.append(json.dumps(sorted(pred_words)))
-        bundle.text_word_probabilities.append(json.dumps(word_probs, sort_keys=True))
-        bundle.text_sample_counts.append({
-            "word_tp": tp, "word_fp": fp, "word_fn": fn,
-            "token_tp": token_tp, "token_fp": token_fp, "token_fn": token_fn,
-            "words": word_count, "visible_words": len(visible_ids),
-            "unseen_positive_words": unseen_positive,
-        })
+        if store_details:
+            bundle.text_target_word_ids.append(json.dumps(sorted(target_words)))
+            bundle.text_pred_word_ids.append(json.dumps(sorted(pred_words)))
+            bundle.text_word_probabilities.append(json.dumps(word_probs, sort_keys=True))
+            bundle.text_sample_counts.append({
+                "word_tp": tp, "word_fp": fp, "word_fn": fn,
+                "token_tp": token_tp, "token_fp": token_fp, "token_fn": token_fn,
+                "words": word_count, "visible_words": len(visible_ids),
+                "unseen_positive_words": unseen_positive,
+            })
 
 
 def _router_sample_diagnostics(output: Any, batch_size: int) -> list[str]:
@@ -392,9 +500,7 @@ def compute_metrics_and_reports(
     atomic_pred = (atomic_scores >= atomic_thresholds.reshape(1, -1)).astype(int)
 
     image_metrics = _image_metrics_from_ious(bundle.image_all_ious)
-    text_metrics = _text_metrics_from_counts(bundle.text_token_tp, bundle.text_token_fp, bundle.text_token_fn)
-    word_metrics = _text_metrics_from_counts(bundle.text_tp, bundle.text_fp, bundle.text_fn)
-    positive_text = _text_metrics_from_counts(bundle.text_positive_tp, bundle.text_positive_fp, bundle.text_positive_fn)
+    grounding_metrics = text_grounding_metrics(bundle)
     hypothesis_names = bundle.hypothesis_names or [
         f"hypothesis_{index}" for index in range(atomic_targets.shape[1])
     ]
@@ -425,11 +531,9 @@ def compute_metrics_and_reports(
         **binary_detection_metrics(binary_targets, binary_scores, threshold=thresholds.binary),
         **attribution_metrics(atomic_targets, atomic_scores, thresholds=atomic_thresholds),
         **image_metrics,
-        **text_metrics,
+        **grounding_metrics,
         **{f"{key}_fixed": value for key, value in fixed_attr.items() if key != "map"},
         "acc_fixed": fixed_binary["acc"],
-        **{key.replace("text_", "text_word_"): value for key, value in word_metrics.items()},
-        **{f"{key}_positive_only": value for key, value in positive_text.items()},
         **{f"{key}_positive_only": value for key, value in _image_metrics_from_ious(bundle.image_ious).items()},
         "sample_count": len(bundle.ids),
         "image_sample_count": len(bundle.image_all_ious),
@@ -501,6 +605,62 @@ def compute_metrics_and_reports(
     }
 
 
+def text_grounding_metrics(bundle: PredictionBundle) -> dict[str, Any]:
+    """Return text-localization metrics, including absence false positives."""
+
+    token_metrics = _text_metrics_from_counts(
+        bundle.text_token_tp, bundle.text_token_fp, bundle.text_token_fn
+    )
+    word_metrics = _text_metrics_from_counts(
+        bundle.text_tp, bundle.text_fp, bundle.text_fn
+    )
+    positive_metrics = _text_metrics_from_counts(
+        bundle.text_positive_tp,
+        bundle.text_positive_fp,
+        bundle.text_positive_fn,
+    )
+    return {
+        **token_metrics,
+        **{key.replace("text_", "text_word_"): value for key, value in word_metrics.items()},
+        **{f"{key}_positive_only": value for key, value in positive_metrics.items()},
+        "text_grounding_aggregation": bundle.text_grounding_aggregation,
+        "text_evaluated_sample_count": bundle.text_evaluated_sample_count,
+        "text_manipulated_evaluated_sample_count": (
+            bundle.text_manipulated_evaluated_sample_count
+        ),
+        "text_absent_sample_count": bundle.text_absent_sample_count,
+        "text_absent_sample_with_prediction_count": (
+            bundle.text_absent_sample_with_prediction_count
+        ),
+        "text_absent_sample_false_positive_rate": _safe_ratio(
+            bundle.text_absent_sample_with_prediction_count,
+            bundle.text_absent_sample_count,
+        ),
+        "text_absent_token_count": bundle.text_absent_token_count,
+        "text_absent_token_predicted_positive_count": (
+            bundle.text_absent_token_predicted_positive_count
+        ),
+        "text_absent_token_false_positive_rate": _safe_ratio(
+            bundle.text_absent_token_predicted_positive_count,
+            bundle.text_absent_token_count,
+        ),
+        "text_absent_word_count": bundle.text_absent_word_count,
+        "text_absent_word_predicted_positive_count": (
+            bundle.text_absent_word_predicted_positive_count
+        ),
+        "text_absent_word_false_positive_rate": _safe_ratio(
+            bundle.text_absent_word_predicted_positive_count,
+            bundle.text_absent_word_count,
+        ),
+        "text_token_count": bundle.text_token_count,
+        "text_word_count": bundle.text_total_words,
+        "text_visible_word_count": bundle.text_visible_words,
+        "text_positive_word_count": bundle.text_total_positive_words,
+        "text_unseen_positive_word_count": bundle.text_unseen_positive_words,
+        "text_coverage_complete": bundle.text_coverage_complete,
+    }
+
+
 def exclusive_class_decision_scores(atomic_scores: np.ndarray) -> np.ndarray:
     """Build Real + mutually exclusive manipulation decision scores.
 
@@ -535,3 +695,7 @@ def _text_metrics_from_counts(tp: int, fp: int, fn: int) -> dict[str, float]:
     recall = tp / (tp + fn) if tp + fn > 0 else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
     return {"text_precision": precision, "text_recall": recall, "text_f1": f1}
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float:
+    return numerator / denominator if denominator > 0 else 0.0
