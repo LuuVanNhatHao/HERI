@@ -140,7 +140,7 @@ def test_deletion_controls_preserve_area_padding_and_targets():
 def test_matched_study_pending_tables_and_seed_intervals(tmp_path):
     root = Path(__file__).resolve().parents[1]
     suite = {"seeds": [7, 21, 101], "variants": ["b1", "b1_noisy_or", "learned_queries", "two_cycle_static", "full_hera"],
-             "epochs": 20, "hera_train_config": "config/train_hera.yaml", "b1_train_config": "config/train_baseline_b1.yaml", "output_root": str(tmp_path)}
+             "epochs": 20, "hera_train_config": "config/datasets/dgm4/hera/train.yaml", "b1_train_config": "config/datasets/dgm4/baselines/b1/train.yaml", "output_root": str(tmp_path)}
     manifest = materialize_study(suite, root)
     assert len(manifest["jobs"]) == 15
     assert aggregate_study(manifest)["status"] == "pending"

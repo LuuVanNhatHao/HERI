@@ -1,0 +1,13 @@
+_base_: evaluate.yaml
+
+project:
+  name: HERA-SAMM-presence-gated
+  config_name: samm/hera/evaluate_seed42
+  run_id: samm_hera_seed42_presence_gated_test
+
+evaluation:
+  checkpoint_path: /workspace/checkpoints/hera_samm20k_seed42/checkpoints/best.pt
+  thresholds_path: /workspace/checkpoints/hera_samm20k_seed42/thresholds/best_thresholds.json
+
+output:
+  root: outputs/samm/hera_eval

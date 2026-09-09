@@ -1,0 +1,7 @@
+suite:
+  hera_train_config: config/datasets/dgm4/hera/train.yaml
+  b1_train_config: config/datasets/dgm4/baselines/b1/train.yaml
+  output_root: outputs/scientific_v3
+  epochs: 20
+  seeds: [7, 21, 101]
+  variants: [b1, b1_noisy_or, learned_queries, two_cycle_static, full_hera]

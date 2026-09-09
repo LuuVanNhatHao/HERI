@@ -19,7 +19,11 @@ def test_passed_server_validation_check_is_skipped(tmp_path) -> None:
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()
     record_path = logs_dir / "already_passed.json"
-    command = ["python", "scripts/does_not_exist.py", "config/server_validation.yaml"]
+    command = [
+        "python",
+        "scripts/does_not_exist.py",
+        "config/diagnostics/server_validation.yaml",
+    ]
     record_path.write_text(
         json.dumps(
             {

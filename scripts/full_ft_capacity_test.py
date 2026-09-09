@@ -259,7 +259,9 @@ def _write_report(path: Path, report: Mapping[str, Any]) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("config", nargs="?", default="config/train_hera.yaml")
+    parser.add_argument(
+        "config", nargs="?", default="config/datasets/dgm4/hera/train.yaml"
+    )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--batches", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)

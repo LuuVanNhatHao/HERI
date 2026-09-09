@@ -34,7 +34,7 @@ from src.utils.config import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUITE_PATH = ROOT / "config" / "experiments" / "samm_matched_multiseed.yaml"
+SUITE_PATH = ROOT / "config" / "experiments" / "samm" / "matched_multiseed.yaml"
 
 
 def _write_summary(
@@ -303,7 +303,9 @@ def test_baseline_completion_marker_and_completed_horizon_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = load_yaml_config(ROOT / "config" / "train_samm_baseline_b1.yaml")
+    config = load_yaml_config(
+        ROOT / "config" / "datasets" / "samm" / "baselines" / "b1" / "train.yaml"
+    )
     run_dir = tmp_path / "b1_run"
     best = run_dir / "checkpoints" / "best.pt"
     best.parent.mkdir(parents=True)

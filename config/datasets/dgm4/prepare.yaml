@@ -1,0 +1,69 @@
+project:
+  name: HERA-DGM
+  seed: 42
+  config_name: dgm4/prepare
+
+dataset:
+  name: DGM4
+  root: data/DGM4
+  train_annotations: data/DGM4/train.json
+  val_annotations: data/DGM4/val.json
+  test_annotations: data/DGM4/test.json
+  image_root: data/DGM4/images
+  verify_hashes: true
+  verify_image_exists: true
+
+image:
+  size: 384
+  preserve_aspect_ratio: true
+  padding: true
+
+tokenizer:
+  enabled: false
+  name: microsoft/deberta-v3-large
+  use_fast: true
+  max_length: 64
+  local_files_only: true
+  ignore_index: -100
+
+dataloader:
+  batch_size: 8
+  num_workers: 0
+  pin_memory: false
+  persistent_workers: false
+  prefetch_factor: 2
+  shuffle:
+    train: true
+    val: false
+    test: false
+  drop_last: false
+  seed: 42
+  id_aware_sampler:
+    enabled: false
+
+preflight:
+  verify_schema: true
+  verify_paths: true
+  verify_image_headers: true
+  verify_full_decode: false
+  verify_boxes: true
+  verify_mtcnn_match: true
+  verify_text_positions: true
+  verify_split_counts: true
+  write_manifest: true
+  worker_threads: 64
+
+smoke:
+  split: train
+  max_samples: 16
+  samples_per_class: 1
+  inspect_batches: 1
+
+output:
+  root: outputs/data_preflight
+
+progress:
+  enabled: true
+
+logging:
+  level: INFO

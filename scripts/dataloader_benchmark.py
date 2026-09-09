@@ -95,7 +95,9 @@ def _benchmark_workers(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("config", nargs="?", default="config/train_hera.yaml")
+    parser.add_argument(
+        "config", nargs="?", default="config/datasets/dgm4/hera/train.yaml"
+    )
     parser.add_argument("--workers", type=int, nargs="+", default=[8, 12, 16, 24])
     parser.add_argument("--split", choices=["train", "val", "test"], default="train")
     parser.add_argument("--prefetch-factor", type=int, default=2)

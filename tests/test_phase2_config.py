@@ -13,20 +13,23 @@ from src.utils.config import load_yaml_config, validate_baseline_config
 
 def test_phase2_yaml_configs_validate() -> None:
     files = {
-        "config/train_baseline_b0.yaml": "train",
-        "config/train_baseline_b1.yaml": "train",
-        "config/evaluate_baseline_b0.yaml": "evaluate",
-        "config/evaluate_baseline_b1.yaml": "evaluate",
-        "config/smoke_baseline_b0.yaml": "smoke",
-        "config/smoke_baseline_b1.yaml": "smoke",
+        "config/datasets/dgm4/baselines/b0/train.yaml": "train",
+        "config/datasets/dgm4/baselines/b1/train.yaml": "train",
+        "config/datasets/dgm4/baselines/b0/evaluate.yaml": "evaluate",
+        "config/datasets/dgm4/baselines/b1/evaluate.yaml": "evaluate",
+        "config/datasets/dgm4/baselines/b0/smoke.yaml": "smoke",
+        "config/datasets/dgm4/baselines/b1/smoke.yaml": "smoke",
     }
     for path, mode in files.items():
         validate_baseline_config(load_yaml_config(path), mode=mode)
 
 
 def test_controlled_baseline_training_matches_hera_optimization_policy() -> None:
-    hera = load_yaml_config("config/train_hera.yaml")
-    for path in ("config/train_baseline_b0.yaml", "config/train_baseline_b1.yaml"):
+    hera = load_yaml_config("config/datasets/dgm4/hera/train.yaml")
+    for path in (
+        "config/datasets/dgm4/baselines/b0/train.yaml",
+        "config/datasets/dgm4/baselines/b1/train.yaml",
+    ):
         baseline = load_yaml_config(path)
         assert baseline["training"]["epochs"] == hera["training"]["epochs"] == 20
         assert baseline["training"]["micro_batch_size"] == hera["training"]["micro_batch_size"] == 16
@@ -47,7 +50,7 @@ def test_controlled_baseline_training_matches_hera_optimization_policy() -> None
 
 
 def test_legacy_baseline_checkpoint_architecture_is_rejected() -> None:
-    current = load_yaml_config("config/train_baseline_b0.yaml")
+    current = load_yaml_config("config/datasets/dgm4/baselines/b0/train.yaml")
     legacy = dict(current)
     legacy["project"] = dict(current["project"])
     legacy["project"].pop("architecture_version")
@@ -75,7 +78,7 @@ def test_baseline_evaluation_latest_resolution_does_not_mix_b0_and_b1(tmp_path: 
         tmp_path / "b1_cross_attention_seed42_newer",
         timestamp=2,
     )
-    config = load_yaml_config("config/evaluate_baseline_b0.yaml")
+    config = load_yaml_config("config/datasets/dgm4/baselines/b0/evaluate.yaml")
     config["evaluation"]["checkpoint_resolution"]["output_root"] = str(tmp_path)
 
     assert resolve_baseline_evaluation_artifacts(config) == (b0_checkpoint, b0_thresholds)
@@ -90,7 +93,7 @@ def test_baseline_auto_resume_selects_only_matching_variant(tmp_path: Path) -> N
     b1_last.write_bytes(b"b1")
     os.utime(b0_last, (1, 1))
     os.utime(b1_last, (2, 2))
-    config = load_yaml_config("config/train_baseline_b0.yaml")
+    config = load_yaml_config("config/datasets/dgm4/baselines/b0/train.yaml")
     config["output"]["root"] = str(tmp_path)
 
     assert _resolve_baseline_resume_checkpoint(config) == b0_last

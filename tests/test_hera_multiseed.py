@@ -24,7 +24,7 @@ from src.utils.config import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUITE_PATH = ROOT / "config" / "experiments" / "hera_multiseed.yaml"
+SUITE_PATH = ROOT / "config" / "experiments" / "dgm4" / "multiseed.yaml"
 
 
 def test_manifest_defines_three_unique_canonical_seeds() -> None:

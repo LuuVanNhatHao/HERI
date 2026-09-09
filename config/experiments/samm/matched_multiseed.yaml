@@ -1,0 +1,59 @@
+suite:
+  name: hera_samm_matched_multiseed
+  protocol_id: samm_matched_multiseed_v1
+  hera_train_config: config/datasets/samm/hera/train.yaml
+  hera_evaluate_config: config/datasets/samm/hera/evaluate.yaml
+  b1_train_config: config/datasets/samm/baselines/b1/train.yaml
+  b1_evaluate_config: config/datasets/samm/baselines/b1/evaluate.yaml
+  output_root: outputs/samm/matched_multiseed
+  expected_test_samples: 50000
+  fail_fast: true
+
+  # Seed 42 is the existing canonical run. Seeds 7 and 21 add two independent
+  # repeats while preserving the frozen dataset protocol seed 777.
+  seeds:
+    - 42
+    - 7
+    - 21
+
+  # Prespecified order is enforced by the runner and executed sequentially.
+  variants:
+    - hera
+    - b1
+    - no_router
+    - generic_grounding
+
+  aggregate_metrics:
+    - class_accuracy
+    - class_macro_f1
+    - acc
+    - acc_fixed
+    - auc
+    - eer
+    - map
+    - cf1
+    - cf1_fixed
+    - of1
+    - of1_fixed
+    - image_mean_iou
+    - image_mean_iou_positive_only
+    - image_iou50_positive_only
+    - image_iou75_positive_only
+    - text_word_f1
+    - text_f1_positive_only
+
+  # Completed seed-42 runs are imported only if their summary and prediction
+  # CSVs pass full dataset/hash/seed/variant/row-count validation.
+  reuse_summaries:
+    hera:
+      42: outputs/samm/hera_eval/samm_hera_seed42_presence_gated_test/summary.csv
+    b1:
+      42: outputs/samm/baseline_b1_eval/samm_baseline_b1_test_evaluation/summary.csv
+
+  retention:
+    minimum_free_gib_before_train: 55
+    delete_last_after_evaluation: true
+    delete_best_after_evaluation: true
+
+  environment:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True

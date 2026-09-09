@@ -1713,43 +1713,46 @@ src/
 scripts/
 ```
 
-Canonical initial structure:
+Canonical repository structure:
 
 ```text
 HERA-DGM/
 │
 ├── config/
-│   ├── prepare_dgm4.yaml
-│   ├── train_baseline.yaml
-│   ├── train_hera.yaml
-│   ├── evaluate_hera.yaml
-│   ├── cross_generator.yaml
-│   └── intervention.yaml
+│   ├── datasets/
+│   │   ├── dgm4/
+│   │   └── samm/
+│   ├── experiments/
+│   │   ├── dgm4/
+│   │   └── samm/
+│   ├── diagnostics/
+│   └── benchmarks/
 │
 ├── src/
 │   ├── compat/
 │   ├── data/
+│   ├── benchmarks/
 │   ├── models/
 │   ├── evidence/
+│   ├── routing/
 │   ├── graph/
 │   ├── losses/
 │   ├── metrics/
 │   ├── thresholding/
 │   ├── training/
 │   ├── evaluation/
+│   ├── experiments/
 │   └── utils/
 │
 ├── scripts/
 │   ├── prepare_data.py
 │   ├── train.py
 │   ├── evaluate.py
-│   ├── cross_generator.py
-│   └── intervention.py
+│   └── experiment and diagnostic entry points
 │
 ├── tests/
 ├── docs/
 ├── outputs/
-├── logs/
 ├── requirements.txt
 └── README.md
 ```
@@ -1811,19 +1814,19 @@ python <script.py> <config.yaml>
 Examples:
 
 ```bash
-python scripts/prepare_data.py config/prepare_dgm4.yaml
+python scripts/prepare_data.py config/datasets/dgm4/prepare.yaml
 ```
 
 ```bash
-python scripts/train.py config/train_baseline.yaml
+python scripts/train.py config/datasets/dgm4/baselines/b1/train.yaml
 ```
 
 ```bash
-python scripts/train.py config/train_hera.yaml
+python scripts/train.py config/datasets/dgm4/hera/train.yaml
 ```
 
 ```bash
-python scripts/evaluate.py config/evaluate_hera.yaml
+python scripts/evaluate.py config/datasets/dgm4/hera/evaluate.yaml
 ```
 
 ```bash

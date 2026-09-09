@@ -8,7 +8,7 @@ from src.utils.config import load_yaml_config, validate_baseline_config, validat
 
 def test_capacity_config_forces_immediate_full_finetuning_without_resume() -> None:
     config = build_capacity_config(
-        load_yaml_config("config/train_hera.yaml"),
+        load_yaml_config("config/datasets/dgm4/hera/train.yaml"),
         batch_size=16,
         batches=2,
         gradient_accumulation_steps=1,
@@ -31,8 +31,8 @@ def test_capacity_config_forces_immediate_full_finetuning_without_resume() -> No
 @pytest.mark.parametrize(
     "path,baseline_type",
     [
-        ("config/train_baseline_b0.yaml", "b0_global"),
-        ("config/train_baseline_b1.yaml", "b1_cross_attention"),
+        ("config/datasets/dgm4/baselines/b0/train.yaml", "b0_global"),
+        ("config/datasets/dgm4/baselines/b1/train.yaml", "b1_cross_attention"),
     ],
 )
 def test_capacity_config_supports_controlled_full_ft_baselines(
@@ -65,7 +65,7 @@ def test_capacity_config_rejects_nonpositive_work(
 ) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         build_capacity_config(
-            load_yaml_config("config/train_hera.yaml"),
+            load_yaml_config("config/datasets/dgm4/hera/train.yaml"),
             batch_size=batch_size,
             batches=batches,
             gradient_accumulation_steps=accumulation,
@@ -75,7 +75,7 @@ def test_capacity_config_rejects_nonpositive_work(
 def test_capacity_config_requires_complete_accumulation_windows() -> None:
     with pytest.raises(ValueError, match="must be divisible"):
         build_capacity_config(
-            load_yaml_config("config/train_hera.yaml"),
+            load_yaml_config("config/datasets/dgm4/hera/train.yaml"),
             batch_size=4,
             batches=3,
             gradient_accumulation_steps=2,

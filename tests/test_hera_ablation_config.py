@@ -22,12 +22,12 @@ from src.utils.config import ConfigError, load_yaml_config, validate_hera_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUITE_PATH = ROOT / "config" / "experiments" / "hera_ablation.yaml"
+SUITE_PATH = ROOT / "config" / "experiments" / "dgm4" / "ablation.yaml"
 
 
 @pytest.mark.parametrize("variant", HERA_ABLATION_VARIANTS)
 def test_each_registered_ablation_is_a_valid_single_change(variant: str) -> None:
-    canonical = load_yaml_config(ROOT / "config" / "train_hera.yaml")
+    canonical = load_yaml_config(ROOT / "config/datasets/dgm4/hera/train.yaml")
     untouched = copy.deepcopy(canonical)
 
     effective = apply_hera_ablation_variant(canonical, variant)
@@ -43,7 +43,9 @@ def test_ablation_registry_explicitly_excludes_b0_and_b1() -> None:
     assert tuple(suite["variants"]) == HERA_ABLATION_VARIANTS
     assert not any(name in {"b0", "b1", "b0_global", "b1_cross_attention"} for name in suite["variants"])
 
-    baseline = load_yaml_config(ROOT / "config" / "train_baseline_b0.yaml")
+    baseline = load_yaml_config(
+        ROOT / "config" / "datasets" / "dgm4" / "baselines" / "b0" / "train.yaml"
+    )
     with pytest.raises(ValueError, match="B0/B1"):
         apply_hera_ablation_variant(baseline, "no_router")
 
@@ -81,7 +83,7 @@ def test_suite_rejects_variant_not_enabled_by_manifest(tmp_path: Path) -> None:
 
 
 def test_checkpoint_variant_mismatch_is_rejected() -> None:
-    canonical = load_yaml_config(ROOT / "config" / "train_hera.yaml")
+    canonical = load_yaml_config(ROOT / "config/datasets/dgm4/hera/train.yaml")
     no_router = apply_hera_ablation_variant(canonical, "no_router")
     gatv2 = apply_hera_ablation_variant(canonical, "gatv2")
 

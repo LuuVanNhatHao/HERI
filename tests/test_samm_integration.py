@@ -199,11 +199,11 @@ def test_samm_metrics_include_three_class_result_and_dynamic_thresholds(
 
 def test_all_samm_configs_resolve_and_validate() -> None:
     for path, mode in (
-        ("config/train_samm_hera.yaml", "train"),
-        ("config/evaluate_samm_hera.yaml", "evaluate"),
-        ("config/evaluate_samm_hera_presence_gated_seed42.yaml", "evaluate"),
-        ("config/evaluate_samm_hera_text_grounding_diagnostic.yaml", "evaluate"),
-        ("config/smoke_samm_hera.yaml", "smoke"),
+        ("config/datasets/samm/hera/train.yaml", "train"),
+        ("config/datasets/samm/hera/evaluate.yaml", "evaluate"),
+        ("config/datasets/samm/hera/evaluate_seed42.yaml", "evaluate"),
+        ("config/datasets/samm/hera/text_grounding_diagnostic.yaml", "evaluate"),
+        ("config/datasets/samm/hera/smoke.yaml", "smoke"),
     ):
         config = load_yaml_config(path)
         assert config["tokenizer"]["max_length"] == 128
@@ -211,9 +211,9 @@ def test_all_samm_configs_resolve_and_validate() -> None:
         assert config["model"]["grounding"]["text"]["aggregation"] == "presence_gated"
         validate_hera_config(config, mode=mode)
     for path, mode in (
-        ("config/train_samm_baseline_b1.yaml", "train"),
-        ("config/evaluate_samm_baseline_b1.yaml", "evaluate"),
-        ("config/smoke_samm_baseline_b1.yaml", "smoke"),
+        ("config/datasets/samm/baselines/b1/train.yaml", "train"),
+        ("config/datasets/samm/baselines/b1/evaluate.yaml", "evaluate"),
+        ("config/datasets/samm/baselines/b1/smoke.yaml", "smoke"),
     ):
         config = load_yaml_config(path)
         assert config["tokenizer"]["max_length"] == 128
@@ -224,7 +224,7 @@ def test_all_samm_configs_resolve_and_validate() -> None:
 def test_samm_key_ablation_suite_materializes_only_prespecified_variants(
     tmp_path: Path,
 ) -> None:
-    suite = load_ablation_suite("config/experiments/hera_samm_key_ablations.yaml")
+    suite = load_ablation_suite("config/experiments/samm/key_ablations.yaml")
     suite["output_root"] = str(tmp_path / "samm_ablations")
     jobs = materialize_ablation_jobs(suite, repo_root=Path.cwd())
     assert [job.variant for job in jobs] == ["no_router", "generic_grounding"]

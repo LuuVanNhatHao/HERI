@@ -46,7 +46,9 @@ def materialize_study(suite: dict, root: Path) -> dict:
         raise ValueError("Scientific runs require warm-up followed by backbone adaptation")
     hera = load_yaml_config(root / suite["hera_train_config"])
     b1 = load_yaml_config(root / suite["b1_train_config"])
-    eval_template = load_yaml_config(root / "config/evaluate_hera.yaml")["evaluation"]
+    eval_template = load_yaml_config(
+        root / "config/datasets/dgm4/hera/evaluate.yaml"
+    )["evaluation"]
     prepared = []
     for variant in variants:
         for seed in seeds:

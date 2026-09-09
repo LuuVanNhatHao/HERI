@@ -10,8 +10,8 @@ from src.utils.config import ConfigError, load_yaml_config
 
 
 CONFIGS = (
-    "config/benchmark_multibanfakedetect.yaml",
-    "config/benchmark_vldbench.yaml",
+    "config/benchmarks/multibanfakedetect.yaml",
+    "config/benchmarks/vldbench.yaml",
 )
 
 

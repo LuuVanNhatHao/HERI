@@ -114,7 +114,7 @@ def test_multiban_adapter_and_preflight_use_the_same_normalized_text(
     module = types.ModuleType("normalizer")
     module.normalize = fake_normalize  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "normalizer", module)
-    config = load_yaml_config("config/benchmark_multibanfakedetect.yaml")
+    config = load_yaml_config("config/benchmarks/multibanfakedetect.yaml")
     config["dataset"]["root"] = str(tmp_path)
     config["dataset"]["artifacts_dir"] = str(tmp_path / "artifacts")
     rows = {

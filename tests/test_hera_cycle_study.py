@@ -23,7 +23,7 @@ from src.utils.config import ConfigError, load_yaml_config, validate_hera_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUITE_PATH = ROOT / "config" / "experiments" / "hera_cycle_study.yaml"
+SUITE_PATH = ROOT / "config" / "experiments" / "dgm4" / "cycle_study.yaml"
 
 
 def test_manifest_defines_complete_controlled_cycle_study() -> None:
@@ -41,7 +41,7 @@ def test_manifest_defines_complete_controlled_cycle_study() -> None:
 
 @pytest.mark.parametrize("variant", HERA_CYCLE_STUDY_VARIANTS)
 def test_cycle_variant_is_valid_but_canonical_protocol_stays_locked(variant: str) -> None:
-    canonical = load_yaml_config(ROOT / "config" / "train_hera.yaml")
+    canonical = load_yaml_config(ROOT / "config/datasets/dgm4/hera/train.yaml")
     effective = apply_hera_cycle_study_variant(canonical, variant)
 
     validate_hera_config(effective, mode="train")
@@ -60,14 +60,14 @@ def test_cycle_variant_is_valid_but_canonical_protocol_stays_locked(variant: str
 
 
 def test_unlabeled_noncanonical_cycle_config_is_rejected() -> None:
-    config = load_yaml_config(ROOT / "config" / "train_hera.yaml")
+    config = load_yaml_config(ROOT / "config/datasets/dgm4/hera/train.yaml")
     config["graph"]["reasoning"]["cycles"] = 3
     with pytest.raises(ConfigError, match="exactly two"):
         validate_hera_config(config, mode="train")
 
 
 def test_cycle_study_rejects_component_ablation_combination() -> None:
-    config = load_yaml_config(ROOT / "config" / "train_hera.yaml")
+    config = load_yaml_config(ROOT / "config/datasets/dgm4/hera/train.yaml")
     config["ablation"] = {"enabled": True, "variant": "no_router"}
     config["cycle_study"] = {
         "enabled": True,
@@ -116,7 +116,7 @@ def test_materialized_jobs_are_isolated_and_resume_safe(tmp_path: Path) -> None:
 
 
 def test_checkpoint_identity_prevents_cross_cycle_resume() -> None:
-    canonical = load_yaml_config(ROOT / "config" / "train_hera.yaml")
+    canonical = load_yaml_config(ROOT / "config/datasets/dgm4/hera/train.yaml")
     static = apply_hera_cycle_study_variant(canonical, "two_cycle_static")
     dynamic = apply_hera_cycle_study_variant(canonical, "full_hera")
 

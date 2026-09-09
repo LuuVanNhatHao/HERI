@@ -15,7 +15,9 @@ from src.utils.config import dump_yaml, load_yaml_config
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite", default="config/experiments/hera_scientific_v3.yaml")
+    parser.add_argument(
+        "--suite", default="config/experiments/dgm4/scientific_v3.yaml"
+    )
     parser.add_argument("--manifest", help="Reuse an existing manifest to aggregate or resume identical code")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Resume an interrupted job from its own last.pt")

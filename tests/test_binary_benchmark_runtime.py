@@ -21,7 +21,7 @@ from src.utils.config import load_yaml_config
 
 
 def test_atomic_last_checkpoint_contains_complete_resume_state(tmp_path: Path) -> None:
-    config = load_yaml_config("config/benchmark_multibanfakedetect.yaml")
+    config = load_yaml_config("config/benchmarks/multibanfakedetect.yaml")
     config["checkpointing"]["minimum_free_gib"] = 0
     model = torch.nn.Linear(3, 1)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -109,15 +109,15 @@ def test_full_ft_gradient_audit_names_largest_missing_tensor() -> None:
 
 
 def test_reference_compile_runtime_fix_preserves_resume_signature() -> None:
-    config = load_yaml_config("config/benchmark_vldbench.yaml")
-    previous = load_yaml_config("config/benchmark_vldbench.yaml")
+    config = load_yaml_config("config/benchmarks/vldbench.yaml")
+    previous = load_yaml_config("config/benchmarks/vldbench.yaml")
     previous["runtime"].pop("reference_compile")
 
     assert benchmark_signature(config) == benchmark_signature(previous)
 
 
 def test_best_checkpoint_selection_excludes_frozen_warmup_epochs() -> None:
-    config = load_yaml_config("config/benchmark_multibanfakedetect.yaml")
+    config = load_yaml_config("config/benchmarks/multibanfakedetect.yaml")
 
     assert checkpoint_stage_is_eligible(config, 1) is False
     assert checkpoint_stage_is_eligible(config, 3) is False
