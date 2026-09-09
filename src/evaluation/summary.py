@@ -8,7 +8,11 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
-from src.evaluation.evaluator import PredictionBundle, exclusive_class_decision_scores
+from src.evaluation.evaluator import (
+    PredictionBundle,
+    exclusive_class_decision_scores,
+    gated_image_iou_for_sample,
+)
 from src.thresholding.tuner import Thresholds
 
 
@@ -34,6 +38,18 @@ def write_predictions_csv(
     for idx, sample_id in enumerate(bundle.ids):
         atomic_scores = bundle.atomic_scores[idx]
         atomic_targets = bundle.atomic_targets[idx]
+        presence_score = _value_or_blank(bundle.image_presence_scores, idx)
+        predicts_image_presence = (
+            int(float(presence_score) >= float(thresholds.image_presence))
+            if presence_score != "" and thresholds.image_presence is not None
+            else ""
+        )
+        ungated_box = _value_or_blank(bundle.image_grounding_pred_boxes, idx)
+        gated_box = (
+            "[0.0, 0.0, 0.0, 0.0]"
+            if predicts_image_presence == 0
+            else ungated_box
+        )
         row = {
                 "id": sample_id,
                 "fake_cls": bundle.fake_cls[idx],
@@ -54,8 +70,14 @@ def write_predictions_csv(
                 "face_area_fraction": _value_or_blank(bundle.face_area_fraction, idx),
                 "face_size_bucket": _value_or_blank(bundle.face_size_bucket, idx),
                 "image_grounding_pred_index": _value_or_blank(bundle.image_grounding_pred_indices, idx),
-                "image_grounding_iou": _value_or_blank(bundle.image_grounding_pred_ious, idx),
-                "image_grounding_pred_box": _value_or_blank(bundle.image_grounding_pred_boxes, idx),
+                "image_presence_probability": presence_score,
+                "image_presence_threshold": thresholds.image_presence,
+                "predicted_image_presence": predicts_image_presence,
+                "image_grounding_iou": gated_image_iou_for_sample(
+                    bundle, idx, thresholds.image_presence
+                ),
+                "image_grounding_pred_box": gated_box,
+                "image_grounding_ungated_pred_box": ungated_box,
                 "text_grounding_target_word_ids": _value_or_blank(bundle.text_target_word_ids, idx),
                 "text_grounding_pred_word_ids": _value_or_blank(bundle.text_pred_word_ids, idx),
                 "text_word_probabilities": _value_or_blank(bundle.text_word_probabilities, idx),
@@ -112,6 +134,10 @@ def write_summary_csv(
         "image_mean_iou": metrics.get("image_mean_iou"),
         "image_iou50": metrics.get("image_iou50"),
         "image_iou75": metrics.get("image_iou75"),
+        "image_iou95": metrics.get("image_iou95"),
+        "image_presence_precision": metrics.get("image_presence_precision"),
+        "image_presence_recall": metrics.get("image_presence_recall"),
+        "image_presence_f1": metrics.get("image_presence_f1"),
         "text_precision": metrics.get("text_precision"),
         "text_recall": metrics.get("text_recall"),
         "text_f1": metrics.get("text_f1"),

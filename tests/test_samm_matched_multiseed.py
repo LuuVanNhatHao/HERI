@@ -66,6 +66,8 @@ def _write_summary(
         "text_grounding_aggregation": (
             "generic_head" if variant == "b1" else "presence_gated"
         ),
+        "image_presence_aggregation": "ontology_noisy_or",
+        "image_presence_threshold": 0.5,
         "class_macro_f1": class_macro_f1,
         "class_accuracy": class_macro_f1 - 0.01,
         "acc": class_macro_f1 - 0.02,
@@ -81,8 +83,13 @@ def _write_predictions(path: Path, count: int = 50_000) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["id", "binary_probability"])
-        writer.writerows((index, 0.5) for index in range(count))
+        writer.writerow([
+            "id",
+            "binary_probability",
+            "image_presence_probability",
+            "predicted_image_presence",
+        ])
+        writer.writerows((index, 0.5, 0.5, 1) for index in range(count))
 
 
 def test_manifest_prespecifies_four_variants_and_three_seeds() -> None:

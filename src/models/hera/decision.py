@@ -161,6 +161,7 @@ class HERADecisionModule(nn.Module):
                 "image_grounding_order": list(self.hypothesis_spec.image),
                 "text_grounding_order": list(self.hypothesis_spec.text),
                 "image_hypothesis_indices": list(self.hypothesis_spec.image_indices),
+                "image_presence_aggregation": "ontology_noisy_or",
                 "text_hypothesis_indices": list(self.hypothesis_spec.text_indices),
                 "binary_aggregation": self.binary_aggregation,
                 "binary_shortcut": self.binary_aggregation == "independent_head",

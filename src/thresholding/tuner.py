@@ -14,11 +14,13 @@ from src.graph.schema import HYPOTHESIS_ORDER
 
 @dataclass(frozen=True)
 class Thresholds:
-    """Binary and atomic decision thresholds."""
+    """Binary, atomic, and optional ontology-aware grounding thresholds."""
 
     binary: float
     atomic: tuple[float, ...]
     hypothesis_names: tuple[str, ...] = HYPOTHESIS_ORDER
+    image_presence: float | None = None
+    image_presence_source: str | None = None
 
     def __post_init__(self) -> None:
         if not self.atomic:
@@ -29,6 +31,10 @@ class Thresholds:
             raise ValueError("binary threshold must be in [0,1]")
         if any(not 0.0 <= float(value) <= 1.0 for value in self.atomic):
             raise ValueError("atomic thresholds must be in [0,1]")
+        if self.image_presence is not None and not 0.0 <= float(self.image_presence) <= 1.0:
+            raise ValueError("image presence threshold must be in [0,1]")
+        if self.image_presence is None and self.image_presence_source is not None:
+            raise ValueError("image_presence_source requires an image presence threshold")
         if len(set(self.hypothesis_names)) != len(self.hypothesis_names):
             raise ValueError("hypothesis_names must be unique")
 
@@ -40,6 +46,11 @@ class Thresholds:
         }
         for name, threshold in zip(self.hypothesis_names, self.atomic):
             result[f"{name.lower()}_threshold"] = threshold
+        if self.image_presence is not None:
+            result["image_presence_threshold"] = self.image_presence
+            result["image_presence_threshold_source"] = (
+                self.image_presence_source or "validation_tuned"
+            )
         return result
 
 
@@ -74,13 +85,21 @@ def tune_thresholds(
     config: Mapping[str, Any],
     progress: bool = True,
     hypothesis_names: tuple[str, ...] | list[str] | None = None,
+    image_presence_targets: np.ndarray | None = None,
+    image_presence_scores: np.ndarray | None = None,
 ) -> Thresholds:
     """Tune thresholds exclusively on validation predictions."""
 
     if not bool(config.get("enabled", True)):
         names = tuple(hypothesis_names or HYPOTHESIS_ORDER[: atomic_targets.shape[1]])
+        image_section = config.get("image_presence", {})
+        image_threshold = 0.5 if bool(image_section.get("enabled", False)) else None
         return Thresholds(
-            binary=0.5, atomic=(0.5,) * atomic_targets.shape[1], hypothesis_names=names
+            binary=0.5,
+            atomic=(0.5,) * atomic_targets.shape[1],
+            hypothesis_names=names,
+            image_presence=image_threshold,
+            image_presence_source=("fixed_0.5" if image_threshold is not None else None),
         )
     binary_threshold = _tune_binary(
         binary_targets=binary_targets,
@@ -94,6 +113,22 @@ def tune_thresholds(
         section=config["attribution"],
         progress=progress,
     )
+    image_presence_threshold = None
+    image_presence_source = None
+    image_section = config.get("image_presence", {})
+    if bool(image_section.get("enabled", False)):
+        if image_presence_targets is None or image_presence_scores is None:
+            raise ValueError(
+                "image presence thresholding requires validation targets and scores"
+            )
+        image_presence_threshold = _tune_binary(
+            binary_targets=np.asarray(image_presence_targets, dtype=int),
+            binary_scores=np.asarray(image_presence_scores, dtype=float),
+            section=image_section,
+            progress=progress,
+            description="Tune image-presence threshold",
+        )
+        image_presence_source = "validation_tuned_macro_f1"
     names = tuple(hypothesis_names or HYPOTHESIS_ORDER[: len(atomic_thresholds)])
     if len(names) != len(atomic_thresholds):
         raise ValueError("hypothesis_names must align with atomic targets")
@@ -101,6 +136,8 @@ def tune_thresholds(
         binary=binary_threshold,
         atomic=tuple(float(v) for v in atomic_thresholds),
         hypothesis_names=names,
+        image_presence=image_presence_threshold,
+        image_presence_source=image_presence_source,
     )
 
 
@@ -110,11 +147,12 @@ def _tune_binary(
     binary_scores: np.ndarray,
     section: Mapping[str, Any],
     progress: bool,
+    description: str = "Tune binary threshold",
 ) -> float:
     best_threshold = 0.5
     best_score = -1.0
     thresholds = _grid(section)
-    iterator = tqdm(thresholds, desc="Tune binary threshold", disable=not progress)
+    iterator = tqdm(thresholds, desc=description, disable=not progress)
     for threshold in iterator:
         pred = (binary_scores >= threshold).astype(int)
         if section.get("objective", "macro_f1") == "macro_f1":

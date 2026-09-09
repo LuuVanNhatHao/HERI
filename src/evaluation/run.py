@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -128,6 +129,41 @@ def _load_thresholds(path: Path, *, checkpoint_path: Path, checkpoint: Mapping[s
         binary=float(data["binary_threshold"]),
         atomic=tuple(float(value) for value in values),
         hypothesis_names=names,
+        image_presence=(
+            float(data["image_presence_threshold"])
+            if data.get("image_presence_threshold") is not None
+            else None
+        ),
+        image_presence_source=data.get("image_presence_threshold_source"),
+    )
+
+
+def apply_image_presence_threshold_fallback(
+    thresholds: Thresholds,
+    config: Mapping[str, Any],
+) -> Thresholds:
+    """Enable old checkpoints to use an explicitly declared clean fallback.
+
+    SAMM maps every manipulation hypothesis to the image modality, so its
+    validation-tuned binary Noisy-OR threshold is also a valid image-presence
+    threshold.  The fallback is opt-in and recorded in all result artifacts.
+    """
+
+    if thresholds.image_presence is not None:
+        return thresholds
+    fallback = str(
+        config.get("evaluation", {}).get("image_presence_threshold_fallback", "disabled")
+    ).strip().lower()
+    if fallback in {"", "disabled", "none"}:
+        return thresholds
+    if fallback != "binary":
+        raise ValueError(
+            "evaluation.image_presence_threshold_fallback must be disabled or binary"
+        )
+    return replace(
+        thresholds,
+        image_presence=float(thresholds.binary),
+        image_presence_source="validation_binary_threshold_fallback",
     )
 
 
@@ -173,6 +209,7 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
         checkpoint_path=checkpoint_path,
         checkpoint=checkpoint,
     )
+    thresholds = apply_image_presence_threshold_fallback(thresholds, config)
     bundle = run_inference(
         model=model,
         loader=loader,

@@ -165,6 +165,22 @@ This retains hypothesis selection while suppressing token false positives on
 samples for which no text manipulation is predicted. `relative_soft` and
 `token_noisy_or` remain available as explicit diagnostic interventions.
 
+Image grounding uses the analogous ontology-aware, target-free abstention
+rule. It emits the official empty box when no configured image hypothesis is
+present according to a validation-only threshold:
+
+```text
+image presence = 1 - product_{h in image hypotheses} (1 - P(h))
+predicted box  = empty if image presence < validation threshold else routed box
+```
+
+DGM4 therefore aggregates `FS/FA`, while SAMM aggregates
+`SWAP/ATTRIBUTE`; neither the dataset name nor the number of classes is
+hard-coded. The threshold is tuned on validation image-presence labels and
+then frozen for test. An archived SAMM checkpoint may reuse its saved
+validation binary threshold because every SAMM manipulation hypothesis is
+image-grounded.
+
 ### 8. Multi-task learning and staged adaptation
 
 The training objective combines atomic attribution, attribution-derived binary

@@ -99,6 +99,7 @@ thresholding:
   enabled: true
   binary: {objective: macro_f1, min: 0.05, max: 0.95, step: 0.01}
   attribution: {mode: per_class, objective: f1, min: 0.05, max: 0.95, step: 0.01}
+  image_presence: {enabled: true, objective: macro_f1, min: 0.05, max: 0.95, step: 0.01}
 checkpointing:
   selection_metric: cf1
   tie_breakers: [map, auc, text_f1, image_mean_iou]

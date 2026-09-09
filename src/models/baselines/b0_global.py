@@ -28,6 +28,7 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
         head_hidden_dim: int,
         dropout: float,
         hypothesis_order: tuple[str, ...] = ("FS", "FA", "TS", "TA"),
+        image_hypothesis_names: tuple[str, ...] = ("FS", "FA"),
         siglip2: nn.Module | None = None,
         dinov3: nn.Module | None = None,
         deberta: nn.Module | None = None,
@@ -44,6 +45,14 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
         )
         self.binary_head = BinaryHead(input_dim=fusion_dim)
         self.hypothesis_order = tuple(hypothesis_order)
+        self.image_hypothesis_names = tuple(image_hypothesis_names)
+        if not self.image_hypothesis_names or not set(self.image_hypothesis_names).issubset(
+            self.hypothesis_order
+        ):
+            raise ValueError("image_hypothesis_names must be a non-empty ontology subset")
+        self.image_hypothesis_indices = tuple(
+            self.hypothesis_order.index(name) for name in self.image_hypothesis_names
+        )
         self.attribution_head = AttributionHead(
             input_dim=fusion_dim, num_labels=len(self.hypothesis_order)
         )
@@ -103,7 +112,13 @@ class B0GlobalFusionBaseline(nn.Module, BaselineBackboneMixin):
             image_grounding_patch_boxes=image_patch_boxes,
             text_grounding_logits=text_logits,
             text_grounding_mask=text_mask,
-            metadata={"baseline_type": "b0_global", "hypothesis_order": list(self.hypothesis_order)},
+            metadata={
+                "baseline_type": "b0_global",
+                "hypothesis_order": list(self.hypothesis_order),
+                "image_grounding_order": list(self.image_hypothesis_names),
+                "image_hypothesis_indices": list(self.image_hypothesis_indices),
+                "image_presence_aggregation": "ontology_noisy_or",
+            },
         )
         output.validate()
         return output

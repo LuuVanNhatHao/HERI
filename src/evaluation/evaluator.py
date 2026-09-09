@@ -25,6 +25,7 @@ from src.training.precision import PrecisionManager
 from src.evaluation.protocol import protocol_metadata
 from src.evaluation.hypothesis_grounding import (
     TEXT_GROUNDING_AGGREGATIONS,
+    image_grounding_presence_probability,
     route_image_grounding_boxes,
     route_text_grounding_probabilities,
 )
@@ -55,6 +56,8 @@ class PredictionBundle:
     image_grounding_pred_indices: list[int | None] = field(default_factory=list)
     image_grounding_pred_ious: list[float | None] = field(default_factory=list)
     image_grounding_pred_boxes: list[str] = field(default_factory=list)
+    image_presence_scores: list[float] = field(default_factory=list)
+    image_presence_hypothesis_names: list[str] = field(default_factory=list)
     face_area_fraction: list[float | None] = field(default_factory=list)
     face_size_bucket: list[str | None] = field(default_factory=list)
     text_target_word_ids: list[str] = field(default_factory=list)
@@ -294,6 +297,18 @@ def _accumulate_image_ious(bundle: PredictionBundle, output: Any, batch: Mapping
         raise ValueError("Protocol-clean evaluation requires direct image_grounding_boxes")
     predicted_boxes = predicted_boxes.detach().cpu()
     route_weights = route_weights.detach().cpu()
+    presence_scores = image_grounding_presence_probability(output).detach().cpu()
+    if presence_scores.shape != (predicted_boxes.shape[0],):
+        raise ValueError("image presence scores must be [B]")
+    bundle.image_presence_scores.extend(float(value) for value in presence_scores)
+    if not bundle.image_presence_hypothesis_names:
+        metadata = getattr(output, "metadata", {})
+        hypothesis_order = tuple(metadata.get("hypothesis_order", ()))
+        image_indices = tuple(metadata.get("image_hypothesis_indices", (0, 1)))
+        if hypothesis_order and max(image_indices, default=-1) < len(hypothesis_order):
+            bundle.image_presence_hypothesis_names = [
+                str(hypothesis_order[index]) for index in image_indices
+            ]
     for idx in range(predicted_boxes.shape[0]):
         route_index = int(route_weights[idx].argmax().item())
         bundle.image_grounding_pred_indices.append(route_index)
@@ -501,7 +516,11 @@ def compute_metrics_and_reports(
     binary_pred = (binary_scores >= thresholds.binary).astype(int)
     atomic_pred = (atomic_scores >= atomic_thresholds.reshape(1, -1)).astype(int)
 
-    image_metrics = _image_metrics_from_ious(bundle.image_all_ious)
+    gated_image_all_ious, gated_image_positive_ious = _gated_image_ious(
+        bundle, thresholds.image_presence
+    )
+    image_metrics = _image_metrics_from_ious(gated_image_all_ious)
+    ungated_image_metrics = _image_metrics_from_ious(bundle.image_all_ious)
     grounding_metrics = text_grounding_metrics(bundle)
     hypothesis_names = bundle.hypothesis_names or [
         f"hypothesis_{index}" for index in range(atomic_targets.shape[1])
@@ -536,7 +555,19 @@ def compute_metrics_and_reports(
         **grounding_metrics,
         **{f"{key}_fixed": value for key, value in fixed_attr.items() if key != "map"},
         "acc_fixed": fixed_binary["acc"],
-        **{f"{key}_positive_only": value for key, value in _image_metrics_from_ious(bundle.image_ious).items()},
+        **{
+            f"{key}_positive_only": value
+            for key, value in _image_metrics_from_ious(gated_image_positive_ious).items()
+        },
+        **{
+            f"{key}_ungated": value
+            for key, value in ungated_image_metrics.items()
+        },
+        **_image_presence_metrics(bundle, thresholds.image_presence),
+        "image_presence_threshold": thresholds.image_presence,
+        "image_presence_threshold_source": thresholds.image_presence_source,
+        "image_presence_aggregation": "ontology_noisy_or",
+        "image_presence_hypotheses": ",".join(bundle.image_presence_hypothesis_names),
         "sample_count": len(bundle.ids),
         "image_sample_count": len(bundle.image_all_ious),
         "image_positive_sample_count": len(bundle.image_ious),
@@ -683,12 +714,99 @@ def exclusive_class_decision_scores(atomic_scores: np.ndarray) -> np.ndarray:
 
 def _image_metrics_from_ious(values: list[float]) -> dict[str, float | None]:
     if not values:
-        return {"image_mean_iou": None, "image_iou50": None, "image_iou75": None}
+        return {
+            "image_mean_iou": None,
+            "image_iou50": None,
+            "image_iou75": None,
+            "image_iou95": None,
+        }
     arr = np.asarray(values, dtype=float)
     return {
         "image_mean_iou": float(arr.mean()),
         "image_iou50": float((arr > 0.5).mean()),
         "image_iou75": float((arr > 0.75).mean()),
+        "image_iou95": float((arr > 0.95).mean()),
+    }
+
+
+def _gated_image_ious(
+    bundle: PredictionBundle,
+    threshold: float | None,
+) -> tuple[list[float], list[float]]:
+    """Apply target-free empty-box abstention to cached ungated IoUs."""
+
+    if threshold is None:
+        return list(bundle.image_all_ious), list(bundle.image_ious)
+    if len(bundle.image_presence_scores) != len(bundle.ids):
+        raise ValueError("Image presence scores must align with prediction IDs")
+    if len(bundle.image_grounding_pred_ious) != len(bundle.ids):
+        raise ValueError("Image grounding IoUs must align with prediction IDs")
+    all_ious: list[float] = []
+    positive_ious: list[float] = []
+    for applies, available, score, ungated_iou in zip(
+        bundle.has_image_manipulation,
+        bundle.image_grounding_available,
+        bundle.image_presence_scores,
+        bundle.image_grounding_pred_ious,
+    ):
+        if not available or ungated_iou is None:
+            continue
+        predicts_presence = float(score) >= float(threshold)
+        if applies:
+            value = float(ungated_iou) if predicts_presence else 0.0
+            positive_ious.append(value)
+        else:
+            # An abstention emits the official empty box [0,0,0,0].  If the
+            # raw head was already empty, retain its valid empty-target match.
+            value = float(ungated_iou) if predicts_presence else 1.0
+        all_ious.append(value)
+    return all_ious, positive_ious
+
+
+def gated_image_iou_for_sample(
+    bundle: PredictionBundle,
+    index: int,
+    threshold: float | None,
+) -> float | None:
+    """Return the per-sample IoU after ontology-aware empty-box abstention."""
+
+    if index >= len(bundle.image_grounding_pred_ious):
+        return None
+    value = bundle.image_grounding_pred_ious[index]
+    if value is None or threshold is None:
+        return value
+    if index >= len(bundle.image_presence_scores):
+        raise ValueError("Image presence scores must align with grounding predictions")
+    predicts_presence = bundle.image_presence_scores[index] >= float(threshold)
+    if bundle.has_image_manipulation[index]:
+        return float(value) if predicts_presence else 0.0
+    return float(value) if predicts_presence else 1.0
+
+
+def _image_presence_metrics(
+    bundle: PredictionBundle,
+    threshold: float | None,
+) -> dict[str, float | None]:
+    if threshold is None or not bundle.image_presence_scores:
+        return {
+            "image_presence_precision": None,
+            "image_presence_recall": None,
+            "image_presence_f1": None,
+        }
+    available = np.asarray(bundle.image_grounding_available, dtype=bool)
+    targets = np.asarray(bundle.has_image_manipulation, dtype=int)[available]
+    scores = np.asarray(bundle.image_presence_scores, dtype=float)[available]
+    predictions = (scores >= float(threshold)).astype(int)
+    tp = int(((targets == 1) & (predictions == 1)).sum())
+    fp = int(((targets == 0) & (predictions == 1)).sum())
+    fn = int(((targets == 1) & (predictions == 0)).sum())
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {
+        "image_presence_precision": precision,
+        "image_presence_recall": recall,
+        "image_presence_f1": f1,
     }
 
 

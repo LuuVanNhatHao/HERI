@@ -671,6 +671,13 @@ def _validate_summary(
             "HERA SAMM summary does not use canonical presence_gated text grounding: "
             f"{path}"
         )
+    if row.get("image_presence_aggregation") != "ontology_noisy_or":
+        raise ValueError(
+            "SAMM summary does not use ontology-aware image presence gating: "
+            f"{path}"
+        )
+    if row.get("image_presence_threshold", "") in {"", None}:
+        raise ValueError(f"SAMM summary has no frozen image-presence threshold: {path}")
     return row
 
 
@@ -686,7 +693,12 @@ def _validate_prediction_csv(path: Path, *, expected_samples: int) -> None:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
         header = next(reader, None)
-        if not header or "id" not in header:
+        required_columns = {
+            "id",
+            "image_presence_probability",
+            "predicted_image_presence",
+        }
+        if not header or not required_columns.issubset(header):
             raise ValueError(f"Malformed SAMM prediction CSV header: {path}")
         rows = sum(1 for _ in reader)
     if rows != expected_samples:

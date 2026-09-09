@@ -54,6 +54,9 @@ def build_baseline_model(
         "hypothesis_order": tuple(
             model_config.get("hypotheses", {}).get("order", ("FS", "FA", "TS", "TA"))
         ),
+        "image_hypothesis_names": tuple(
+            model_config.get("hypotheses", {}).get("image", ("FS", "FA"))
+        ),
     }
     if baseline_type == "b0_global":
         return B0GlobalFusionBaseline(

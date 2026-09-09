@@ -60,6 +60,25 @@ def route_image_grounding_boxes(
     return boxes, weights
 
 
+def image_grounding_presence_probability(output: HERADecisionOutput) -> torch.Tensor:
+    """Return target-free P(any image-grounded hypothesis) via Noisy-OR.
+
+    The ontology is read from ``image_hypothesis_indices`` rather than inferred
+    from the number or names of dataset classes.  This keeps the abstention
+    mechanism identical for DGM4, SAMM, and future ontologies.
+    """
+
+    probabilities = output.atomic_probabilities
+    if probabilities.ndim != 2 or probabilities.shape[1] < 1:
+        raise ValueError("atomic_probabilities must be [B,K]")
+    metadata = getattr(output, "metadata", {})
+    indices = tuple(metadata.get("image_hypothesis_indices", (0, 1)))
+    if not indices or min(indices) < 0 or max(indices) >= probabilities.shape[1]:
+        raise ValueError("image_hypothesis_indices are invalid")
+    selected = probabilities[:, list(indices)].clamp(0.0, 1.0)
+    return 1.0 - torch.prod(1.0 - selected, dim=1)
+
+
 def route_text_grounding_probabilities(
     output: HERADecisionOutput,
     *,

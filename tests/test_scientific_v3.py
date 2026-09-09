@@ -9,7 +9,14 @@ import torch
 
 from graph_fixtures import graph_config, synthetic_evidence
 from phase2_fixtures import synthetic_batch, synthetic_features
-from src.evaluation.evaluator import PredictionBundle, _accumulate_text_counts, _accumulate_image_ious, _image_metrics_from_ious
+from src.evaluation.evaluator import (
+    PredictionBundle,
+    _accumulate_text_counts,
+    _accumulate_image_ious,
+    _gated_image_ious,
+    _image_metrics_from_ious,
+)
+from src.evaluation.hypothesis_grounding import image_grounding_presence_probability
 from src.evaluation.run import _load_thresholds
 from src.experiments.scientific_study import aggregate_study, materialize_study, mean_interval
 from src.graph.query_reasoner import LearnedQueryReasoner
@@ -58,6 +65,33 @@ def test_image_all_scope_and_strict_iou_threshold():
     assert bundle.image_ious == pytest.approx([1.])
     assert _image_metrics_from_ious([.5, .75])["image_iou50"] == .5
     assert _image_metrics_from_ious([.5, .75])["image_iou75"] == 0
+
+
+def test_image_presence_is_ontology_driven_and_abstains_without_targets():
+    dgm4 = SimpleNamespace(
+        atomic_probabilities=torch.tensor([[.2, .5, .9, .8]]),
+        metadata={"image_hypothesis_indices": [0, 1]},
+    )
+    samm = SimpleNamespace(
+        atomic_probabilities=torch.tensor([[.2, .5]]),
+        metadata={"image_hypothesis_indices": [0, 1]},
+    )
+    assert image_grounding_presence_probability(dgm4).item() == pytest.approx(.6)
+    assert image_grounding_presence_probability(samm).item() == pytest.approx(.6)
+
+    bundle = PredictionBundle(
+        ids=[1, 2, 3],
+        has_image_manipulation=[False, True, True],
+        image_grounding_available=[True, True, True],
+        image_presence_scores=[.1, .2, .9],
+        image_grounding_pred_ious=[0., .8, .7],
+        image_all_ious=[0., .8, .7],
+        image_ious=[.8, .7],
+    )
+    all_ious, positive_ious = _gated_image_ious(bundle, .5)
+    assert all_ious == pytest.approx([1., 0., .7])
+    assert positive_ious == pytest.approx([0., .7])
+    assert _image_metrics_from_ious(all_ious)["image_iou95"] == pytest.approx(1 / 3)
 
 
 def test_query_control_has_no_edges_and_backward_is_finite():

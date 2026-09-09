@@ -339,6 +339,12 @@ class HERATrainer:
                 config=self.config["thresholding"],
                 progress=self.progress,
                 hypothesis_names=tuple(self.config["model"]["hypotheses"]["order"]),
+                image_presence_targets=torch.tensor(
+                    val_bundle.has_image_manipulation, dtype=torch.int64
+                ).numpy(),
+                image_presence_scores=torch.tensor(
+                    val_bundle.image_presence_scores, dtype=torch.float32
+                ).numpy(),
             )
             self.state.thresholds = thresholds
             reports = compute_metrics_and_reports(val_bundle, thresholds)
@@ -348,6 +354,10 @@ class HERATrainer:
                     binary=0.5,
                     atomic=(0.5,) * len(thresholds.atomic),
                     hypothesis_names=thresholds.hypothesis_names,
+                    image_presence=(0.5 if thresholds.image_presence is not None else None),
+                    image_presence_source=(
+                        "fixed_0.5" if thresholds.image_presence is not None else None
+                    ),
                 ),
             )
             router_summary = _aggregate_router_summaries(val_bundle.router_batch_summaries)
@@ -1093,6 +1103,12 @@ def _thresholds_from_mapping(data: Mapping[str, Any]) -> Thresholds:
         binary=float(data["binary_threshold"]),
         atomic=tuple(float(value) for value in values),
         hypothesis_names=names,
+        image_presence=(
+            float(data["image_presence_threshold"])
+            if data.get("image_presence_threshold") is not None
+            else None
+        ),
+        image_presence_source=data.get("image_presence_threshold_source"),
     )
 
 

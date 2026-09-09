@@ -326,6 +326,12 @@ class BaselineTrainer:
                         "order", ("FS", "FA", "TS", "TA")
                     )
                 ),
+                image_presence_targets=torch.tensor(
+                    val_bundle.has_image_manipulation, dtype=torch.int64
+                ).numpy(),
+                image_presence_scores=torch.tensor(
+                    val_bundle.image_presence_scores, dtype=torch.float32
+                ).numpy(),
             )
             self.state.thresholds = thresholds
             reports = compute_metrics_and_reports(val_bundle, thresholds)
@@ -335,6 +341,10 @@ class BaselineTrainer:
                     binary=0.5,
                     atomic=(0.5,) * len(thresholds.atomic),
                     hypothesis_names=thresholds.hypothesis_names,
+                    image_presence=(0.5 if thresholds.image_presence is not None else None),
+                    image_presence_source=(
+                        "fixed_0.5" if thresholds.image_presence is not None else None
+                    ),
                 ),
             )
             emit_validation_classification_reports(

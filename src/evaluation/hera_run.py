@@ -18,7 +18,7 @@ from src.evaluation.evaluator import (
     run_text_grounding_diagnostic_inference,
     text_grounding_metrics,
 )
-from src.evaluation.run import _load_thresholds
+from src.evaluation.run import _load_thresholds, apply_image_presence_threshold_fallback
 from src.evaluation.summary import write_predictions_csv, write_summary_csv
 from src.experiments import (
     cycle_study_protocol,
@@ -160,6 +160,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     restore_checkpoint(checkpoint=checkpoint, model=model, restore_rng=False)
     ensure_no_uninitialized_parameters(model, context="HERA evaluation checkpoint load")
     thresholds = _load_thresholds(thresholds_path, checkpoint_path=checkpoint_path, checkpoint=checkpoint)
+    thresholds = apply_image_presence_threshold_fallback(thresholds, config)
     bundle = run_inference(
         model=model,
         loader=loader,
@@ -331,6 +332,7 @@ def evaluate_hera_text_grounding_diagnostic(config: Mapping[str, Any]) -> Path:
     thresholds = _load_thresholds(
         thresholds_path, checkpoint_path=checkpoint_path, checkpoint=checkpoint
     )
+    thresholds = apply_image_presence_threshold_fallback(thresholds, config)
     primary, bundles = run_text_grounding_diagnostic_inference(
         model=model,
         loader=loader,
