@@ -1,6 +1,6 @@
 # Configuration index
 
-YAML files describe dataset identity, architecture, optimization and evaluation. Paths distinguish single-run entries from controlled experiment manifests.
+YAML files describe dataset identity, architecture, optimization and evaluation. DGM4 defines the primary benchmark and main experimental studies; SAMM-20K defines supplementary evaluation with separate training and test splits. Paths distinguish single-run entries from controlled experiment manifests.
 
 ```text
 config/
@@ -45,7 +45,7 @@ Training seed 7 and matched seeds 7/21/101 are independent of SAMM subset seed 7
 | Manifest under `config/experiments/` | CLI study type | Scope |
 | --- | --- | --- |
 | `dgm4/reasoning_controls.yaml` | `scientific` | Matched backbone/query and seven reasoning controls |
-| `dgm4/progressive.yaml` | `scientific` | Table 7 progressive construction |
+| `dgm4/progressive.yaml` | `scientific` | Cumulative architectural construction |
 | `dgm4/components.yaml` | `scientific` | Component and attention controls |
 | `dgm4/matched_components.yaml` | `scientific` | Three-seed component controls |
 | `dgm4/cycle_study.yaml` | `cycle` | Focused cycle/refresh study |
@@ -67,4 +67,4 @@ configuration, checkpoint and evaluation-artifact consistency. The materialized
 manifest records the model designs and adjacent mechanism/configuration changes;
 it defines planned jobs rather than asserting that a corresponding run completed.
 
-The [repository README](../README.md#controlled-experiments) describes cumulative construction, component contrasts and the operators being compared. Its [reproducibility section](../README.md#outputs-and-reproducibility) explains how configurations are associated with saved checkpoints and completed evaluations.
+The [repository README](../README.md#experimental-design) describes cumulative construction, component contrasts and the operators being compared. Its [reproducibility section](../README.md#reproducibility-and-run-records) explains how configurations are associated with saved checkpoints and completed evaluations.
