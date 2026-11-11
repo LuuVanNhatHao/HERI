@@ -932,6 +932,8 @@ def validate_hera_config(config: Mapping[str, Any], *, mode: str) -> None:
         raise ConfigError("Canonical HERA forbids annotation-derived dataset.mtcnn_boxes")
     if str(require_key(config, "project.architecture_version")) != "heri":
         raise ConfigError("project.architecture_version must be heri")
+    if require_key(config, "loss.alignment.aggregation") != "valid_text_mean":
+        raise ConfigError("loss.alignment.aggregation must be valid_text_mean")
     _validate_common_canonical_data_and_backbones(config, phase_name="HERI")
     _validate_samm_scientific_protocol(config, mode=mode)
     if str(require_key(config, "model.model_type")) != "hera":

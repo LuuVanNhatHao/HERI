@@ -242,13 +242,13 @@ def _run_scientific(args: argparse.Namespace, root: Path) -> int:
                 if bool(suite.get("fail_fast", True)) and not args.keep_going:
                     break
     report = aggregate_study(manifest)
-    report_path = manifest_path.parent / "paper_results.json"
+    report_path = manifest_path.parent / "study_results.json"
     report_path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     print(
         json.dumps(
             {
                 "manifest": str(manifest_path),
-                "paper_results": str(report_path),
+                "results": str(report_path),
                 "status": "dry_run" if args.dry_run else report["status"],
                 "selected_jobs": len(jobs),
                 "pending_jobs": len(report["pending_jobs"]),
@@ -271,6 +271,12 @@ def _validate_scientific_manifest(manifest: Mapping[str, Any], root: Path) -> No
     from .scientific_study import digest, source_digest
     from heri.evaluation.protocol import EVALUATION_PROTOCOL
     from heri.utils.config import load_yaml_config, validate_baseline_config, validate_hera_config
+    from heri.experiments.design import describe_model_design
+
+    if manifest.get("evidence_policy") != "artifact_consistency":
+        raise ValueError(
+            "Study manifest must require artifact consistency; materialize a new study"
+        )
 
     if manifest["evaluation_protocol"] != EVALUATION_PROTOCOL:
         raise ValueError(
@@ -302,6 +308,10 @@ def _validate_scientific_manifest(manifest: Mapping[str, Any], root: Path) -> No
                 else validate_baseline_config
             )
             validator(config, mode=phase)
+            if phase == "train" and job.get("design") != describe_model_design(config):
+                raise ValueError(
+                    f"Experimental design differs from the resolved configuration: {path}"
+                )
 
 
 def _run_scientific_phase(

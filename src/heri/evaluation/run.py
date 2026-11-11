@@ -12,8 +12,12 @@ import torch
 from tqdm.auto import tqdm
 
 from heri.data.loader import create_dataloader, verify_annotation_identity
-from heri.evaluation.evaluator import compute_metrics_and_reports, move_batch_to_device, run_inference
-from heri.evaluation.summary import write_predictions_csv, write_summary_csv
+from heri.evaluation.evaluator import (
+    compute_metrics_and_reports,
+    move_batch_to_device,
+    run_inference,
+)
+from heri.evaluation.summary import prediction_identity, write_predictions_csv, write_summary_csv
 from heri.losses.baseline_losses import BaselineMultitaskLoss
 from heri.models.baselines import build_baseline_model
 from heri.thresholding.tuner import Thresholds
@@ -48,7 +52,9 @@ def resolve_baseline_evaluation_artifacts(config: Mapping[str, Any]) -> tuple[Pa
     if mode == "run_dir":
         run_dir_value = resolution.get("run_dir")
         if run_dir_value in (None, ""):
-            raise ValueError("evaluation.checkpoint_resolution.run_dir is required when mode=run_dir")
+            raise ValueError(
+                "evaluation.checkpoint_resolution.run_dir is required when mode=run_dir"
+            )
         run_dirs = [Path(str(run_dir_value))]
     elif mode == "latest":
         output_root = Path(str(resolution["output_root"]))
@@ -56,7 +62,11 @@ def resolve_baseline_evaluation_artifacts(config: Mapping[str, Any]) -> tuple[Pa
         seed = int(config["project"]["seed"])
         prefix = f"{baseline}_seed{seed}_"
         run_dirs = (
-            [path for path in output_root.iterdir() if path.is_dir() and path.name.startswith(prefix)]
+            [
+                path
+                for path in output_root.iterdir()
+                if path.is_dir() and path.name.startswith(prefix)
+            ]
             if output_root.exists()
             else []
         )
@@ -99,12 +109,16 @@ def _is_explicit_artifact_path(value: Any) -> bool:
     return not any(marker in str(value) for marker in _MISSING_PATH_MARKERS)
 
 
-def _load_thresholds(path: Path, *, checkpoint_path: Path, checkpoint: Mapping[str, Any] | None = None) -> Thresholds:
+def _load_thresholds(
+    path: Path, *, checkpoint_path: Path, checkpoint: Mapping[str, Any] | None = None
+) -> Thresholds:
     data = json.loads(path.read_text(encoding="utf-8"))
     bound_by_identity = checkpoint is not None and checkpoint.get("checkpoint_id") is not None
     if bound_by_identity:
         if data.get("checkpoint_id") != checkpoint["checkpoint_id"]:
-            raise ValueError("Threshold checkpoint identity mismatch; regenerate validation thresholds for these weights")
+            raise ValueError(
+                "Threshold checkpoint identity mismatch; regenerate validation thresholds for these weights"
+            )
         if data.get("epoch") != checkpoint.get("epoch"):
             raise ValueError("Threshold checkpoint epoch mismatch")
         if any(data.get(key) != value for key, value in checkpoint.get("thresholds", {}).items()):
@@ -135,9 +149,7 @@ def _load_thresholds(path: Path, *, checkpoint_path: Path, checkpoint: Mapping[s
             else None
         ),
         image_presence_source=data.get("image_presence_threshold_source"),
-        decision_source=data.get(
-            "decision_threshold_source", "legacy_validation_tuned"
-        ),
+        decision_source=data.get("decision_threshold_source", "legacy_validation_tuned"),
     )
 
 
@@ -179,15 +191,15 @@ def apply_image_presence_threshold_fallback(
 
     if thresholds.image_presence is not None:
         return thresholds
-    fallback = str(
-        config.get("evaluation", {}).get("image_presence_threshold_fallback", "disabled")
-    ).strip().lower()
+    fallback = (
+        str(config.get("evaluation", {}).get("image_presence_threshold_fallback", "disabled"))
+        .strip()
+        .lower()
+    )
     if fallback in {"", "disabled", "none"}:
         return thresholds
     if fallback != "binary":
-        raise ValueError(
-            "evaluation.image_presence_threshold_fallback must be disabled or binary"
-        )
+        raise ValueError("evaluation.image_presence_threshold_fallback must be disabled or binary")
     return replace(
         thresholds,
         image_presence=float(thresholds.binary),
@@ -207,7 +219,9 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
     dump_yaml(config, run_dir / "effective_config.yaml")
     environment = collect_environment_metadata(Path.cwd())
     environment["backbones"] = config["backbones"]
-    (run_dir / "environment.json").write_text(json.dumps(environment, indent=2, default=str), encoding="utf-8")
+    (run_dir / "environment.json").write_text(
+        json.dumps(environment, indent=2, default=str), encoding="utf-8"
+    )
 
     device = torch.device(str(config["runtime"]["device"]))
     model = build_baseline_model(config, load_backbones=True).to(device)
@@ -265,9 +279,11 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
         bundle=bundle,
         thresholds=thresholds,
         path=run_dir / "predictions" / f"{config['evaluation']['split']}_predictions.csv",
+        run_info=prediction_identity(config, checkpoint),
     )
     run_info = {
         "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "alignment_objective": "not_applicable",
         "checkpoint_evaluation_protocol": checkpoint.get("evaluation_protocol", "legacy"),
         "scientific_study_id": config.get("scientific_study", {}).get("protocol_id"),
         "scientific_variant": config.get("scientific_study", {}).get("variant"),
@@ -304,5 +320,13 @@ def evaluate_baseline(config: Mapping[str, Any]) -> Path:
         metrics=reports["metrics"],
         thresholds=thresholds,
         reports=reports,
+    )
+    from heri.experiments.provenance import write_evaluation_evidence
+
+    write_evaluation_evidence(
+        run_dir=run_dir,
+        checkpoint_path=checkpoint_path,
+        checkpoint_id=str(checkpoint["checkpoint_id"]),
+        split=str(config["evaluation"]["split"]),
     )
     return run_dir / "summary.csv"

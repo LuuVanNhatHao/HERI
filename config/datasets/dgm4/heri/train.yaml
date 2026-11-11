@@ -206,6 +206,8 @@ loss:
   lambda_txt: 1.0
   lambda_ev: 0.1
   lambda_align: 0.1
+  alignment:
+    aggregation: valid_text_mean
   evidence_sufficiency:
     protocol: per_modality_v1
     aggregation: per_modality

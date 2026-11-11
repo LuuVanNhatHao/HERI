@@ -13,7 +13,7 @@ flowchart TD
     GRAPH --> REFRESH["Semantic re-query and hypothesis feedback"]
     REFRESH --> GRAPH2["Second cycle using the same HGT"]
     GRAPH2 --> HEADS["Atomic probabilities and dense grounding"]
-    HEADS --> LOSS["Masked paper objectives and backward"]
+    HEADS --> LOSS["Masked training objectives and backward"]
     HEADS --> EVAL["Target-independent inference and protocol metrics"]
     EVAL --> ARTIFACTS["Predictions, metrics and run identity"]
 ```
@@ -24,9 +24,9 @@ flowchart TD
 | --- | --- | --- |
 | `data/` | Ontologies, availability masks, geometry, tokenizer alignment, loaders, preflight and SAMM reconstruction | Data unit tests; adapter integration tests |
 | `models/encoders/` | Backbone loading, output shapes and frozen/unfrozen behavior | Model unit tests; real weights required for full runtime checks |
-| `evidence/` | Four projected families, saliency/diversity selection and dense stores | Evidence unit tests; paper formula contracts |
-| `routing/` | One-time reliability, gates and Eq.30 calibration | Routing unit tests; paper formula contracts |
-| `graph/` | Schema, edges, confidence, shared HGT, refresh and registered controls | Graph unit tests; actual-edge paper contracts |
+| `evidence/` | Four projected families, saliency/diversity selection and dense stores | Evidence unit tests; equation contracts |
+| `routing/` | One-time reliability, gates and Eq.30 calibration | Routing unit tests; equation contracts |
+| `graph/` | Schema, edges, confidence, shared HGT, refresh and registered controls | Graph unit tests; actual-edge contracts |
 | `models/heri/` | Composition of evidence, routing, reasoning and prediction heads | Connected synthetic integration tests |
 | `models/heads/` | Atomic prediction, stable Noisy-OR, bilinear grounding and shared box regressor | Model/loss unit tests; grounding formulas |
 | `models/baselines/`, `models/fusion/` | Backbone-matched B0/B1 controls | Baseline unit and integration tests |
@@ -38,9 +38,9 @@ flowchart TD
 
 ## Trace a change
 
-Start with the relevant row of the [equation map](method/paper_contract.md). Follow its implementation into the owning package and inspect that package's input/output dataclasses. Then check a small unit case, its paper contract and the connected integration test. This makes formula changes visible at both the operation and pipeline boundaries.
+Start with the relevant row of the [equation map](method/paper_contract.md). Follow its implementation into the owning package and inspect that package's input/output dataclasses. Then check a small unit case, its mathematical invariant and the connected integration test. This makes formula changes visible at both the operation and pipeline boundaries.
 
-[models/heri/model.py](../src/heri/models/heri/model.py) composes the canonical model. [training/heri_trainer.py](../src/heri/training/heri_trainer.py) controls training; [evaluation/heri_run.py](../src/heri/evaluation/heri_run.py) controls inference and artifact export. Baseline trainers and evaluators share the same dataset and metric contracts. Registered controls change their documented mechanism.
+[models/heri/model.py](../src/heri/models/heri/model.py) composes the canonical model. [training/heri_trainer.py](../src/heri/training/heri_trainer.py) controls training; [evaluation/heri_run.py](../src/heri/evaluation/heri_run.py) controls inference and artifact export. Baseline trainers and evaluators share the same dataset and metric contracts. Registered studies declare the mechanisms, readouts and training objectives changed by each comparison.
 
 
 ## Data and supervision boundaries

@@ -19,6 +19,9 @@ def test_lifecycle_commands_parse_without_loading_models() -> None:
     assert args.output_root == Path("data/SAMM")
     args = parser.parse_args(["validate", "--section", "equations"])
     assert args.section == "equations"
+    args = parser.parse_args(["audit-study", "manifest.json", "--output", "audit.json"])
+    assert args.manifest == Path("manifest.json")
+    assert args.output == Path("audit.json")
     for kind in ("ablation", "cycle", "multiseed", "samm", "scientific"):
         args = parser.parse_args(["study", kind, "config.yaml", "--dry-run"])
         assert args.kind == kind

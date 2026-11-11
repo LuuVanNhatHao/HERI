@@ -23,7 +23,7 @@ from heri.evaluation.run import (
     apply_decision_threshold_policy,
     apply_image_presence_threshold_fallback,
 )
-from heri.evaluation.summary import write_predictions_csv, write_summary_csv
+from heri.evaluation.summary import prediction_identity, write_predictions_csv, write_summary_csv
 from heri.experiments import (
     cycle_study_protocol,
     get_hera_ablation_variant,
@@ -64,8 +64,12 @@ def resolve_hera_evaluation_artifacts(config: Mapping[str, Any]) -> tuple[Path, 
     if mode == "run_dir":
         run_dir_value = resolution.get("run_dir")
         if run_dir_value in (None, ""):
-            raise ValueError("evaluation.checkpoint_resolution.run_dir is required when mode=run_dir")
-        candidates = [_artifact_pair_from_run_dir(Path(str(run_dir_value)), checkpoint_name, thresholds_name)]
+            raise ValueError(
+                "evaluation.checkpoint_resolution.run_dir is required when mode=run_dir"
+            )
+        candidates = [
+            _artifact_pair_from_run_dir(Path(str(run_dir_value)), checkpoint_name, thresholds_name)
+        ]
     elif mode == "latest":
         output_root = Path(str(resolution["output_root"]))
         candidates = _latest_artifact_candidates(output_root, checkpoint_name, thresholds_name)
@@ -135,7 +139,9 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     dump_yaml(config, run_dir / "effective_config.yaml")
     environment = collect_environment_metadata(Path.cwd())
     environment["backbones"] = config["backbones"]
-    (run_dir / "environment.json").write_text(json.dumps(environment, indent=2, default=str), encoding="utf-8")
+    (run_dir / "environment.json").write_text(
+        json.dumps(environment, indent=2, default=str), encoding="utf-8"
+    )
 
     device = torch.device(str(config["runtime"]["device"]))
     model = HERADGM.from_config(config, load_backbones=True).to(device)
@@ -164,7 +170,9 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     )
     restore_checkpoint(checkpoint=checkpoint, model=model, restore_rng=False)
     ensure_no_uninitialized_parameters(model, context="HERA evaluation checkpoint load")
-    thresholds = _load_thresholds(thresholds_path, checkpoint_path=checkpoint_path, checkpoint=checkpoint)
+    thresholds = _load_thresholds(
+        thresholds_path, checkpoint_path=checkpoint_path, checkpoint=checkpoint
+    )
     thresholds = apply_image_presence_threshold_fallback(thresholds, config)
     thresholds = apply_decision_threshold_policy(thresholds, config)
     bundle = run_inference(
@@ -176,16 +184,18 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         max_batches=config["runtime"].get("max_test_batches"),
         desc=f"{config['evaluation']['split']} inference",
         progress=bool(config["progress"]["enabled"]),
-        text_grounding_aggregation=str(
-            config["model"]["grounding"]["text"]["aggregation"]
-        ),
+        text_grounding_aggregation=str(config["model"]["grounding"]["text"]["aggregation"]),
     )
     reports = compute_metrics_and_reports(bundle, thresholds)
     intervention_config = config["evaluation"].get("image_deletion", {})
     if intervention_config.get("enabled", False):
         from heri.evaluation.interventions import evaluate_image_deletion
+
         evaluate_image_deletion(
-            model=model, loader=loader, device=device, precision=precision,
+            model=model,
+            loader=loader,
+            device=device,
+            precision=precision,
             path=run_dir / "metrics/image_deletion.json",
             random_repeats=int(intervention_config.get("random_repeats", 5)),
             seed=int(intervention_config.get("seed", 2026)),
@@ -205,6 +215,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         bundle=bundle,
         thresholds=thresholds,
         path=run_dir / "predictions" / f"{config['evaluation']['split']}_predictions.csv",
+        run_info=prediction_identity(config, checkpoint),
     )
     (run_dir / "router" / f"{config['evaluation']['split']}_batch_summaries.json").write_text(
         json.dumps(bundle.router_batch_summaries, indent=2, default=str),
@@ -217,9 +228,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         if cycle_study_variant is not None
         else {
             "cycles": int(config["graph"]["reasoning"]["cycles"]),
-            "dynamic_rebuild": bool(
-                config["graph"]["reasoning"]["dynamic_rebuild"]
-            ),
+            "dynamic_rebuild": bool(config["graph"]["reasoning"]["dynamic_rebuild"]),
             "rebuild_mode": "state_dependent",
         }
     )
@@ -230,6 +239,7 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
     training_accumulation = int(checkpoint_config["training"]["gradient_accumulation_steps"])
     run_info = {
         "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "alignment_objective": config["loss"]["alignment"]["aggregation"],
         "checkpoint_evaluation_protocol": checkpoint.get("evaluation_protocol", "legacy"),
         "scientific_study_id": config.get("scientific_study", {}).get("protocol_id"),
         "scientific_variant": config.get("scientific_study", {}).get("variant"),
@@ -240,35 +250,25 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         "architecture_version": config["project"]["architecture_version"],
         "image_grounding_protocol": config["model"]["grounding"]["image"]["protocol"],
         "grounding_routing": config["model"]["grounding"]["routing"],
-        "text_grounding_aggregation": config["model"]["grounding"]["text"][
-            "aggregation"
-        ],
-        "evidence_sufficiency_protocol": config["loss"][
-            "evidence_sufficiency"
-        ]["protocol"],
-        "evidence_sufficiency_aggregation": config["loss"][
-            "evidence_sufficiency"
-        ]["aggregation"],
-        "evidence_sufficiency_validity": config["loss"][
-            "evidence_sufficiency"
-        ]["validity"],
-        "evidence_sufficiency_empty_policy": config["loss"][
-            "evidence_sufficiency"
-        ]["empty_policy"],
+        "text_grounding_aggregation": config["model"]["grounding"]["text"]["aggregation"],
+        "evidence_sufficiency_protocol": config["loss"]["evidence_sufficiency"]["protocol"],
+        "evidence_sufficiency_aggregation": config["loss"]["evidence_sufficiency"]["aggregation"],
+        "evidence_sufficiency_validity": config["loss"]["evidence_sufficiency"]["validity"],
+        "evidence_sufficiency_empty_policy": config["loss"]["evidence_sufficiency"]["empty_policy"],
         "graph_reasoning_cycles": config["graph"]["reasoning"]["cycles"],
         "dynamic_graph_rebuild": config["graph"]["reasoning"]["dynamic_rebuild"],
         "graph_rebuild_mode": cycle_protocol["rebuild_mode"],
         "model_variant": (
-            "hera_learned_queries" if query_control else f"hera_cycle_{cycle_study_variant}"
+            "hera_learned_queries"
+            if query_control
+            else f"hera_cycle_{cycle_study_variant}"
             if cycle_study_variant
             else (f"hera_{ablation_variant}" if ablation_variant else "hera")
         ),
         "reasoning_backend": "learned_queries" if query_control else config["graph"]["type"],
         "ablation_variant": ablation_variant or "canonical",
         "cycle_study_variant": cycle_study_variant or "none",
-        "cycle_study_protocol_id": config.get("cycle_study", {}).get(
-            "protocol_id"
-        ),
+        "cycle_study_protocol_id": config.get("cycle_study", {}).get("protocol_id"),
         "seed": config["project"]["seed"],
         "checkpoint": str(checkpoint_path),
         "split": config["evaluation"]["split"],
@@ -296,6 +296,14 @@ def evaluate_hera(config: Mapping[str, Any]) -> Path:
         thresholds=thresholds,
         reports=reports,
     )
+    from heri.experiments.provenance import write_evaluation_evidence
+
+    write_evaluation_evidence(
+        run_dir=run_dir,
+        checkpoint_path=checkpoint_path,
+        checkpoint_id=str(checkpoint["checkpoint_id"]),
+        split=str(config["evaluation"]["split"]),
+    )
     return run_dir / "summary.csv"
 
 
@@ -304,19 +312,17 @@ def evaluate_hera_text_grounding_diagnostic(config: Mapping[str, Any]) -> Path:
 
     verify_annotation_identity(config, str(config["evaluation"]["split"]))
     diagnostic = config["evaluation"].get("text_grounding_diagnostic", {})
-    requested = tuple(diagnostic.get(
-        "aggregations",
-        ("relative_soft", "presence_gated", "token_noisy_or"),
-    ))
+    requested = tuple(
+        diagnostic.get(
+            "aggregations",
+            ("relative_soft", "presence_gated", "token_noisy_or"),
+        )
+    )
     # Keep the released rule first so the complete bundle and reference metrics
     # are directly comparable with the canonical evaluation artifact.
     aggregations = tuple(dict.fromkeys(("relative_soft", *requested)))
     output_root = Path(str(config["output"]["root"]))
-    run_id = str(
-        config["project"].get(
-            "run_id", f"text_grounding_diagnostic_{int(time.time())}"
-        )
-    )
+    run_id = str(config["project"].get("run_id", f"text_grounding_diagnostic_{int(time.time())}"))
     run_dir = output_root / run_id
     (run_dir / "metrics").mkdir(parents=True, exist_ok=True)
     dump_yaml(config, run_dir / "effective_config.yaml")
@@ -337,9 +343,7 @@ def evaluate_hera_text_grounding_diagnostic(config: Mapping[str, Any]) -> Path:
         max_samples=config.get("smoke", {}).get("test_max_samples"),
         samples_per_class=config.get("smoke", {}).get("samples_per_class"),
     )
-    precision = PrecisionManager(
-        precision=str(config["runtime"]["precision"]), device=device
-    )
+    precision = PrecisionManager(precision=str(config["runtime"]["precision"]), device=device)
     checkpoint_path, thresholds_path = resolve_hera_evaluation_artifacts(config)
     tqdm.write(f"Resolved diagnostic checkpoint: {checkpoint_path}")
     tqdm.write(f"Resolved checkpoint-bound threshold artifact: {thresholds_path}")
@@ -385,10 +389,7 @@ def evaluate_hera_text_grounding_diagnostic(config: Mapping[str, Any]) -> Path:
         "class_accuracy_reference": reference_metrics.get("class_accuracy"),
         "class_macro_f1_reference": reference_metrics.get("class_macro_f1"),
     }
-    rows = [
-        {**common, **text_grounding_metrics(bundles[mode])}
-        for mode in aggregations
-    ]
+    rows = [{**common, **text_grounding_metrics(bundles[mode])} for mode in aggregations]
     summary_path = run_dir / "diagnostic_summary.csv"
     with summary_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
@@ -411,9 +412,7 @@ def evaluate_hera_text_grounding_diagnostic(config: Mapping[str, Any]) -> Path:
         encoding="utf-8",
     )
     tqdm.write("Text-grounding absence diagnostic (word level):")
-    tqdm.write(
-        "aggregation       all_F1  positive_F1  absent_word_FP  absent_sample_FP_rate"
-    )
+    tqdm.write("aggregation       all_F1  positive_F1  absent_word_FP  absent_sample_FP_rate")
     for row in rows:
         tqdm.write(
             f"{row['text_grounding_aggregation']:<17} "

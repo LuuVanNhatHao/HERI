@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import os
+import json
 import uuid
 from pathlib import Path
 from typing import Any, Mapping
@@ -33,11 +34,13 @@ def validate_baseline_checkpoint_config(
                 f"{context} baseline {section}.{key} mismatch: "
                 f"{current_value!r} != {checkpoint_value!r}"
             )
-    current_hypotheses = current_config.get("model", {}).get("hypotheses", {}).get(
-        "order", ["FS", "FA", "TS", "TA"]
+    current_hypotheses = (
+        current_config.get("model", {}).get("hypotheses", {}).get("order", ["FS", "FA", "TS", "TA"])
     )
-    checkpoint_hypotheses = checkpoint_config.get("model", {}).get("hypotheses", {}).get(
-        "order", ["FS", "FA", "TS", "TA"]
+    checkpoint_hypotheses = (
+        checkpoint_config.get("model", {})
+        .get("hypotheses", {})
+        .get("order", ["FS", "FA", "TS", "TA"])
     )
     if list(current_hypotheses) != list(checkpoint_hypotheses):
         raise ValueError(f"{context} baseline hypothesis ontology mismatch")
@@ -87,7 +90,8 @@ def dataloader_states(dataloaders: Mapping[str, Any] | None) -> dict[str, Any]:
             "generator": generator.get_state() if generator is not None else None,
             "sampler_generator": (
                 sampler.generator.get_state()
-                if getattr(sampler, "generator", None) is not None else None
+                if getattr(sampler, "generator", None) is not None
+                else None
             ),
             "sampler": sampler.state_dict() if hasattr(sampler, "state_dict") else None,
         }
@@ -166,7 +170,9 @@ def save_checkpoint(
         "global_step": state.global_step,
         "best_metric": state.best_metric,
         "best_score": list(state.best_score) if state.best_score is not None else None,
-        "best_checkpoint": str(state.best_checkpoint) if state.best_checkpoint is not None else None,
+        "best_checkpoint": str(state.best_checkpoint)
+        if state.best_checkpoint is not None
+        else None,
         "early_stopping_best_metric": state.early_stopping_best_metric,
         "early_stopping_bad_epochs": state.early_stopping_bad_epochs,
         "thresholds": state.thresholds.as_dict(),
@@ -182,6 +188,38 @@ def save_checkpoint(
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)
+    # The metadata binds a concrete checkpoint without unpickling it during audits.
+    from heri.experiments.provenance import canonical_config_sha256, checkpoint_metadata_path
+    from heri.utils.hashing import sha256_file
+
+    environment_path = path.parent.parent / "environment.json"
+    environment = (
+        json.loads(environment_path.read_text(encoding="utf-8"))
+        if environment_path.is_file()
+        else {}
+    )
+    metadata = {
+        "schema": "heri_checkpoint_metadata",
+        "checkpoint_id": checkpoint_id,
+        "checkpoint_sha256": sha256_file(path, progress=False),
+        "effective_config_sha256": canonical_config_sha256(config),
+        "effective_config": dict(config),
+        "evaluation_protocol": EVALUATION_PROTOCOL,
+        "alignment_objective": config.get("loss", {})
+        .get("alignment", {})
+        .get("aggregation", "not_applicable"),
+        "source_sha256": environment.get("source_sha256"),
+        "git_commit": environment.get("git_commit"),
+        "epoch": state.epoch,
+        "global_step": state.global_step,
+    }
+    metadata_path = checkpoint_metadata_path(path)
+    metadata_temporary = metadata_path.with_name(f".{metadata_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        metadata_temporary.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        os.replace(metadata_temporary, metadata_path)
+    finally:
+        metadata_temporary.unlink(missing_ok=True)
     return checkpoint_id
 
 
@@ -218,7 +256,9 @@ def restore_checkpoint(
 ) -> dict[str, Any]:
     """Restore an already-loaded checkpoint without a second disk read."""
 
-    if (restore_rng or optimizer is not None or scheduler is not None) and checkpoint.get("evaluation_protocol") != EVALUATION_PROTOCOL:
+    if (restore_rng or optimizer is not None or scheduler is not None) and checkpoint.get(
+        "evaluation_protocol"
+    ) != EVALUATION_PROTOCOL:
         raise ValueError(
             "Cannot resume training with legacy metric-selection state. "
             "Use weights-only evaluation (restore_rng=False) or start an isolated current-protocol run."

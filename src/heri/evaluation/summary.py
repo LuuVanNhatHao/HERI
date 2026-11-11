@@ -26,25 +26,39 @@ def _column_token(name: str) -> str:
     return "".join(char.lower() if char.isalnum() else "_" for char in name).strip("_")
 
 
+def prediction_identity(config: Mapping[str, Any], checkpoint: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind exported predictions to the weights and declared experimental unit."""
+    from heri.evaluation.protocol import EVALUATION_PROTOCOL
+
+    study = config.get("scientific_study", {})
+    return {
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "scientific_study_id": study.get("protocol_id"),
+        "scientific_variant": study.get("variant"),
+        "seed": config.get("project", {}).get("seed"),
+        "evaluation_protocol": EVALUATION_PROTOCOL,
+        "alignment_objective": config.get("loss", {})
+        .get("alignment", {})
+        .get("aggregation", "not_applicable"),
+    }
+
+
 def write_predictions_csv(
     *,
     bundle: PredictionBundle,
     thresholds: Thresholds,
     path: Path,
+    run_info: Mapping[str, Any] | None = None,
 ) -> None:
     """Persist per-sample predictions for later subgroup analysis."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = []
-    hypothesis_names = list(
-        bundle.hypothesis_names or thresholds.hypothesis_names
-    )
+    hypothesis_names = list(bundle.hypothesis_names or thresholds.hypothesis_names)
     if len(hypothesis_names) != len(thresholds.atomic):
         raise ValueError("Prediction hypothesis names and thresholds do not align")
     samm_protocol = is_samm_reporting_ontology(bundle.fake_cls, hypothesis_names)
-    official_targets = (
-        samm_released_targets(bundle.fake_cls) if samm_protocol else None
-    )
+    official_targets = samm_released_targets(bundle.fake_cls) if samm_protocol else None
     official_scores = (
         samm_released_scores(
             np.asarray(bundle.atomic_scores, dtype=float),
@@ -74,55 +88,49 @@ def write_predictions_csv(
             else ""
         )
         ungated_box = _value_or_blank(bundle.image_grounding_pred_boxes, idx)
-        gated_box = (
-            "[0.0, 0.0, 0.0, 0.0]"
-            if predicts_image_presence == 0
-            else ungated_box
-        )
+        gated_box = "[0.0, 0.0, 0.0, 0.0]" if predicts_image_presence == 0 else ungated_box
         row = {
-                "id": sample_id,
-                "fake_cls": bundle.fake_cls[idx],
-                "binary_target": bundle.binary_targets[idx],
-                "binary_probability": bundle.binary_scores[idx],
-                "predicted_binary": int(bundle.binary_scores[idx] >= thresholds.binary),
-                "generator": _value_or_blank(bundle.generator, idx),
-                "image_source": _value_or_blank(bundle.image_source, idx),
-                "annotation_image_path": _value_or_blank(bundle.annotation_image_path, idx),
-                "has_image_manipulation": bundle.has_image_manipulation[idx],
-                "has_text_manipulation": bundle.has_text_manipulation[idx],
-                "image_grounding_available": _value_or_blank(
-                    bundle.image_grounding_available, idx
-                ),
-                "text_grounding_available": _value_or_blank(
-                    bundle.text_grounding_available, idx
-                ),
-                "face_area_fraction": _value_or_blank(bundle.face_area_fraction, idx),
-                "face_size_bucket": _value_or_blank(bundle.face_size_bucket, idx),
-                "image_grounding_pred_index": _value_or_blank(bundle.image_grounding_pred_indices, idx),
-                "image_presence_probability": presence_score,
-                "image_presence_threshold": thresholds.image_presence,
-                "predicted_image_presence": predicts_image_presence,
-                "image_grounding_iou": gated_image_iou_for_sample(
-                    bundle, idx, thresholds.image_presence
-                ),
-                "image_grounding_pred_box": gated_box,
-                "image_grounding_ungated_pred_box": ungated_box,
-                "image_grounding_pred_box_original_pixels": _value_or_blank(bundle.image_grounding_pred_boxes_original, idx),
-                "image_grounding_box_frame": "normalized_padded_canvas",
-                "text_grounding_target_word_ids": _value_or_blank(bundle.text_target_word_ids, idx),
-                "text_grounding_pred_word_ids": _value_or_blank(bundle.text_pred_word_ids, idx),
-                "text_word_probabilities": _value_or_blank(bundle.text_word_probabilities, idx),
-                "evidence_decision_metrics_available": evidence_support is not None,
-                "evidence_decision_threshold": 0.5 if evidence_support is not None else "",
-                "evidence_decision_unit": (
-                    "sample_hypothesis_modality"
-                    if modality_support is not None
-                    else ""
-                ),
-                **(bundle.text_sample_counts[idx] if idx < len(bundle.text_sample_counts) else {}),
-                "router_diagnostics": _value_or_blank(bundle.router_diagnostics, idx),
-                "hypothesis_probabilities_by_cycle": _value_or_blank(bundle.hypothesis_probabilities_by_cycle, idx),
-            }
+            "id": sample_id,
+            "fake_cls": bundle.fake_cls[idx],
+            "binary_target": bundle.binary_targets[idx],
+            "binary_probability": bundle.binary_scores[idx],
+            "predicted_binary": int(bundle.binary_scores[idx] >= thresholds.binary),
+            "generator": _value_or_blank(bundle.generator, idx),
+            "image_source": _value_or_blank(bundle.image_source, idx),
+            "annotation_image_path": _value_or_blank(bundle.annotation_image_path, idx),
+            "has_image_manipulation": bundle.has_image_manipulation[idx],
+            "has_text_manipulation": bundle.has_text_manipulation[idx],
+            "image_grounding_available": _value_or_blank(bundle.image_grounding_available, idx),
+            "text_grounding_available": _value_or_blank(bundle.text_grounding_available, idx),
+            "face_area_fraction": _value_or_blank(bundle.face_area_fraction, idx),
+            "face_size_bucket": _value_or_blank(bundle.face_size_bucket, idx),
+            "image_grounding_pred_index": _value_or_blank(bundle.image_grounding_pred_indices, idx),
+            "image_presence_probability": presence_score,
+            "image_presence_threshold": thresholds.image_presence,
+            "predicted_image_presence": predicts_image_presence,
+            "image_grounding_iou": gated_image_iou_for_sample(
+                bundle, idx, thresholds.image_presence
+            ),
+            "image_grounding_pred_box": gated_box,
+            "image_grounding_ungated_pred_box": ungated_box,
+            "image_grounding_pred_box_original_pixels": _value_or_blank(
+                bundle.image_grounding_pred_boxes_original, idx
+            ),
+            "image_grounding_box_frame": "normalized_padded_canvas",
+            "text_grounding_target_word_ids": _value_or_blank(bundle.text_target_word_ids, idx),
+            "text_grounding_pred_word_ids": _value_or_blank(bundle.text_pred_word_ids, idx),
+            "text_word_probabilities": _value_or_blank(bundle.text_word_probabilities, idx),
+            "evidence_decision_metrics_available": evidence_support is not None,
+            "evidence_decision_threshold": 0.5 if evidence_support is not None else "",
+            "evidence_decision_unit": (
+                "sample_hypothesis_modality" if modality_support is not None else ""
+            ),
+            **(bundle.text_sample_counts[idx] if idx < len(bundle.text_sample_counts) else {}),
+            "router_diagnostics": _value_or_blank(bundle.router_diagnostics, idx),
+            "hypothesis_probabilities_by_cycle": _value_or_blank(
+                bundle.hypothesis_probabilities_by_cycle, idx
+            ),
+        }
         for hypothesis_index, name in enumerate(hypothesis_names):
             token = _column_token(name)
             row[f"{token}_target"] = atomic_targets[hypothesis_index]
@@ -137,10 +145,7 @@ def write_predictions_csv(
                 row[f"{token}_unsupported_decision"] = ""
             else:
                 support = float(evidence_support[hypothesis_index])
-                active = bool(
-                    atomic_scores[hypothesis_index]
-                    >= 0.5
-                )
+                active = bool(atomic_scores[hypothesis_index] >= 0.5)
                 row[f"{token}_evidence_support"] = support
                 row[f"{token}_evidence_support_joint_min"] = support
                 diagnostic_support = support
@@ -155,32 +160,21 @@ def write_predictions_csv(
                             bundle.evidence_support_modality_names
                         )
                         if bool(
-                            bundle.evidence_support_modality_mask[
-                                hypothesis_index
-                            ][modality_index]
+                            bundle.evidence_support_modality_mask[hypothesis_index][modality_index]
                         )
-                        and bool(
-                            _value_or_blank(
-                                availability_by_name.get(modality_name, []), idx
-                            )
-                        )
+                        and bool(_value_or_blank(availability_by_name.get(modality_name, []), idx))
                     ]
                     diagnostic_support = min(valid_support) if valid_support else None
                 row[f"{token}_decision_evidence_gap"] = (
                     max(
                         0.0,
-                        float(atomic_scores[hypothesis_index])
-                        - diagnostic_support,
+                        float(atomic_scores[hypothesis_index]) - diagnostic_support,
                     )
                     if diagnostic_support is not None
                     else ""
                 )
                 row[f"{token}_unsupported_decision"] = (
-                    int(
-                        active
-                        and diagnostic_support
-                        < 0.5
-                    )
+                    int(active and diagnostic_support < 0.5)
                     if diagnostic_support is not None
                     else ""
                 )
@@ -190,52 +184,40 @@ def write_predictions_csv(
                 ):
                     modality_token = _column_token(modality_name)
                     applicable = bool(
-                        bundle.evidence_support_modality_mask[hypothesis_index][
-                            modality_index
-                        ]
+                        bundle.evidence_support_modality_mask[hypothesis_index][modality_index]
                     )
                     available_values = {
                         "image": bundle.image_grounding_available,
                         "text": bundle.text_grounding_available,
                     }.get(modality_name, [])
-                    available = bool(
-                        _value_or_blank(available_values, idx)
-                    ) if available_values else False
+                    available = (
+                        bool(_value_or_blank(available_values, idx)) if available_values else False
+                    )
                     valid = applicable and available
-                    value = float(
-                        modality_support[hypothesis_index][modality_index]
-                    )
-                    row[f"{token}_{modality_token}_evidence_applicable"] = int(
-                        applicable
-                    )
+                    value = float(modality_support[hypothesis_index][modality_index])
+                    row[f"{token}_{modality_token}_evidence_applicable"] = int(applicable)
                     row[f"{token}_{modality_token}_evidence_valid"] = int(valid)
-                    row[f"{token}_{modality_token}_evidence_support"] = (
-                        value if applicable else ""
-                    )
+                    row[f"{token}_{modality_token}_evidence_support"] = value if applicable else ""
                     row[f"{token}_{modality_token}_decision_evidence_gap"] = (
-                        max(0.0, float(atomic_scores[hypothesis_index]) - value)
-                        if valid
-                        else ""
+                        max(0.0, float(atomic_scores[hypothesis_index]) - value) if valid else ""
                     )
                     row[f"{token}_{modality_token}_unsupported_decision"] = (
-                        int(active and value < 0.5)
-                        if valid
-                        else ""
+                        int(active and value < 0.5) if valid else ""
                     )
                     if idx < len(bundle.verified_support_eligible):
-                        eligible = bool(bundle.verified_support_eligible[idx][hypothesis_index][modality_index])
+                        eligible = bool(
+                            bundle.verified_support_eligible[idx][hypothesis_index][modality_index]
+                        )
                         row[f"{token}_{modality_token}_vsr_at_1_eligible"] = int(eligible)
                         row[f"{token}_{modality_token}_vsr_at_1_hit"] = (
-                            int(bundle.verified_support_hits[idx][hypothesis_index][modality_index]) if eligible else ""
+                            int(bundle.verified_support_hits[idx][hypothesis_index][modality_index])
+                            if eligible
+                            else ""
                         )
         if official_targets is not None and official_scores is not None:
             for label_index, label in enumerate(SAMM_RELEASED_LABEL_ORDER):
-                row[f"samm_official_{label}_target"] = int(
-                    official_targets[idx, label_index]
-                )
-                row[f"samm_official_{label}_probability"] = float(
-                    official_scores[idx, label_index]
-                )
+                row[f"samm_official_{label}_target"] = int(official_targets[idx, label_index])
+                row[f"samm_official_{label}_probability"] = float(official_scores[idx, label_index])
                 row[f"samm_official_predicted_{label}"] = int(
                     official_scores[idx, label_index] >= 0.5
                 )
@@ -252,6 +234,20 @@ def write_predictions_csv(
                 row["predicted_class_name"] = bundle.class_names[class_pred]
                 for class_name, score in zip(bundle.class_names, class_scores):
                     row[f"{_column_token(class_name)}_decision_score"] = float(score)
+        if run_info is not None:
+            row.update(
+                {
+                    key: run_info.get(key)
+                    for key in (
+                        "checkpoint_id",
+                        "scientific_study_id",
+                        "scientific_variant",
+                        "seed",
+                        "evaluation_protocol",
+                        "alignment_objective",
+                    )
+                }
+            )
         rows.append(row)
     pd.DataFrame(rows).to_csv(path, index=False)
 

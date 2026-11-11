@@ -20,12 +20,14 @@ SELECTIONS = {
         "integration/test_samm.py::test_samm_per_modality_evidence_loss_masks_unavailable_annotations",
         "integration/test_samm.py::test_samm_per_modality_evidence_loss_empty_domain_is_differentiable_zero",
     ],
-    "runtime": ["contracts/test_runtime.py"],
+    "runtime": ["contracts/test_runtime.py", "contracts/test_alignment_identity.py"],
     "integration": ["integration/test_end_to_end.py"],
     "config": [
         "contracts/test_paper_experiments.py",
         "contracts/test_repository_layout.py",
         "contracts/test_cli.py",
+        "contracts/test_experiment_design.py",
+        "contracts/test_run_provenance.py",
     ],
 }
 

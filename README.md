@@ -87,6 +87,19 @@ python -B scripts/heri.py study samm config/experiments/samm/matched_multiseed.y
 
 Remove `--dry-run` to execute on the training machine. [Experiment documentation](docs/experiments.md) connects manifests, controls, artifacts and result identity; the [configuration index](config/README.md) lists entry points.
 
+The [experimental designs](docs/method/graph_reasoning.md#progressive-construction)
+state the operators and readouts being compared. Progressive stages combine
+architectural changes; component studies expose their separate contrasts.
+Reported observations are linked to saved configurations, checkpoints and
+evaluation artifacts through [experimental provenance](docs/experiments.md#experimental-provenance).
+
+```bash
+python -B scripts/heri.py audit-study path/to/manifest.json
+```
+
+This audits the available run artifacts. Missing experiments remain pending;
+an internally consistent new run is distinct from proof of an earlier result.
+
 The canonical configuration uses hidden size 512, VS/VF/XA/TC budgets 96/96/64/64, semantic TopK 8 and two shared-weight reasoning cycles. Training uses seed 7, 20 epochs, batch 16, AdamW weight decay 0.01, module LR `1e-4` and encoder LR `2e-6`. Encoders freeze for epochs 1–3 and fully unfreeze from epoch 4. The global schedule has 500 warm-up steps followed by linear decay. Matched studies use seeds 7/21/101. Decisions use fixed 0.5; validation CF1 selects checkpoints and early stopping is disabled.
 
 ## Repository map
@@ -98,7 +111,7 @@ scripts/heri.py         Unified command-line entry point
 tests/
 ├── unit/               Data, model, graph, loss, metric and training checks
 ├── integration/        Connected pipeline and adapter checks
-├── contracts/          Paper, configuration, runtime and experiment contracts
+├── contracts/          Equations, configuration, runtime and experiment contracts
 └── support/            Shared synthetic fixtures
 docs/
 ├── architecture.md     Module ownership, data flow and traceability

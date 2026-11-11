@@ -124,11 +124,25 @@ def test_two_samples_real_graph_backward_and_target_independent_inference(datase
     if dataset == "samm":
         assert metrics["samm_official_decision_threshold"] == 0.5
     path = tmp_path / "predictions.csv"
-    write_predictions_csv(bundle=bundle, thresholds=thresholds, path=path)
+    write_predictions_csv(
+        bundle=bundle,
+        thresholds=thresholds,
+        path=path,
+        run_info={
+            "checkpoint_id": "tiny-checkpoint",
+            "scientific_study_id": "tiny-study",
+            "scientific_variant": "full_hera",
+            "seed": 7,
+            "evaluation_protocol": "heri_grounded",
+            "alignment_objective": "valid_text_mean",
+        },
+    )
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2
     assert all(row["hypothesis_probabilities_by_cycle"] for row in rows)
+    assert all(row["checkpoint_id"] == "tiny-checkpoint" for row in rows)
+    assert all(row["alignment_objective"] == "valid_text_mean" for row in rows)
 
 
 def test_same_two_examples_cover_component_removals_and_progressive_readouts():

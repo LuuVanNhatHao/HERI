@@ -15,8 +15,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
         ("prepare-data", "Audit annotation identity, geometry and dataset availability"),
-        ("train", "Train HERI or a configured paper baseline"),
-        ("evaluate", "Evaluate a checkpoint with the paper protocol"),
+        ("train", "Train HERI or a configured baseline"),
+        ("evaluate", "Evaluate a checkpoint with the declared protocol"),
     ):
         sub = commands.add_parser(name, help=help_text)
         sub.add_argument("config", type=Path)
@@ -29,7 +29,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument(
         "--section", choices=("all", "equations", "runtime", "integration", "config"), default="all"
     )
-    sub = commands.add_parser("study", help="Materialize or execute controlled paper experiments")
+    sub = commands.add_parser(
+        "audit-study", help="Inspect actual study artifacts without loading models"
+    )
+    sub.add_argument("manifest", type=Path)
+    sub.add_argument("--output", type=Path)
+    sub = commands.add_parser("study", help="Materialize or execute controlled experiments")
     sub.add_argument("kind", choices=("ablation", "cycle", "multiseed", "samm", "scientific"))
     sub.add_argument("config", type=Path)
     sub.add_argument(
@@ -63,6 +68,16 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
         from heri.experiments.runner import run_study
 
         return run_study(args, root)
+    if args.command == "audit-study":
+        from heri.experiments.provenance import inspect_study_evidence
+
+        report = inspect_study_evidence(args.manifest, repository_root=root)
+        serialized = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(serialized, encoding="utf-8")
+        print(serialized)
+        return 0 if report["status"] == "internally_consistent" else 1
     if args.command == "reconstruct-samm":
         return _reconstruct_samm(args)
     return _run_config(args)
@@ -134,7 +149,9 @@ def _reconstruct_samm(args: argparse.Namespace) -> int:
             record["rows"] != SAMM_EXPECTED_SPLIT_ROWS[split]
             or record["sha256"] != SAMM_EXPECTED_SHA256[split]
         ):
-            raise ValueError(f"Reconstructed {split} differs from the frozen annotation bytes: {record}")
+            raise ValueError(
+                f"Reconstructed {split} differs from the frozen annotation bytes: {record}"
+            )
         payloads[f"{split}.json"] = annotations
         if split == "train":
             payloads["samm20k_train_ids.txt"] = ids

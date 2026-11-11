@@ -29,10 +29,13 @@ the accompanying HERI manuscript.
   priority. Sensitive similarity/confidence/softmax operations use FP32 with
   epsilon 1e-8. Native PyTorch segment softmax permits actual tiny CPU execution
   without changing the operator or requiring PyG.
-- Eq.29 is implemented literally: maxima are summed over valid text nodes
-  and divided by the number of valid image nodes. The printed denominator
-  is retained when the visual and textual position counts differ.
-  Empty sets return differentiable zero.
+- Eq.29 averages over valid text positions. Each text position contributes
+  its maximum initial cosine similarity over valid image positions; the
+  denominator is the number of valid text positions. SmoothL1 calibrates this
+  statistic against the detached native-global image/text cosine. Padding is
+  excluded, valid zero/negative maxima remain in the average, and samples with
+  an empty modality are excluded. An empty batch domain returns differentiable
+  zero.
 - Eq.30 combines a pooled valid-node calibration BCE, mean-reliability penalty,
   and population-standard-deviation floor as a sum. Its selection pseudo-target
   is detached; learned saliency still receives gradients through feature gates.
@@ -53,6 +56,9 @@ second shared operator. The metadata names are `semantic_only`,
   are concatenated and passed through a learned class-specific linear readout
   to produce the states required by the common prediction/grounding heads.
   This readout has no hypothesis nodes or hypothesis-conditioned message passing.
+  The contrast therefore combines removal of hypothesis-node reasoning with
+  a different readout. Its performance difference cannot be attributed solely
+  to the presence of graph nodes.
 - The progressive `operator=pooled` stages use the same family-mean readout
   while omitting all graph edges and HGT computation.
 - Homogeneous evidence retains the exact canonical confidence-aware attention
@@ -66,3 +72,38 @@ second shared operator. The metadata names are `semantic_only`,
   omits both confidence factors. These isolate the attention pathway.
 - Removing forensic graph evidence retains the dense DINO store and the same
   image-grounding task, while exposing zero VF nodes to the graph/router.
+
+## Progressive construction
+
+The progressive study compares the following executable designs. The pooled
+stages concatenate the four masked family means and use a learned linear map
+to construct class-specific states for the shared prediction and grounding
+heads. The graph stages read out the refined hypothesis nodes.
+
+| Variant | Evidence and readout | Binary decision | Sufficiency objective | Reasoning |
+| --- | --- | --- | --- | --- |
+| `b0` | Global-feature fusion baseline | Independent head | None | None |
+| `b1` | Cross-attention baseline | Independent head | None | Cross-attention |
+| `evidence_decomposition` | Four evidence families; pooled readout; reliability router disabled | Independent head | Disabled | No graph operator |
+| `reliability_router` | Same pooled readout; continuous reliability gates and router regularization | Independent head | Disabled | No graph operator |
+| `hypothesis_evidence_graph` | Typed evidence/hypothesis graph; hypothesis-node readout | Independent head | Disabled | One HGT cycle |
+| `constrained_single_pass` | Same typed graph and readout | Noisy-OR | Enabled | One HGT cycle |
+| `full_hera` | Typed graph and hypothesis-node readout | Noisy-OR | Enabled | Two shared cycles with relation refresh |
+
+These transitions are cumulative design comparisons. Introducing the graph
+also changes the readout, and `constrained_single_pass` introduces Noisy-OR and
+the sufficiency objective together. Use the separate `independent_binary` and
+`no_evidence_sufficiency` controls to examine those mechanisms individually
+under the full architecture. Likewise, report the no-hypothesis-node control
+as a graph-and-readout contrast.
+
+Use the same data, pretrained encoders, optimization horizon, threshold policy
+and matched training seeds for a comparison. Inspect the resolved configurations
+and mechanism definitions alongside the results; a variant name alone does
+not identify an experimental run. [Experiment provenance](../experiments.md#experimental-provenance)
+describes the artifacts needed to associate a result with its executed design.
+
+Component interventions change only their declared settings and preserve the
+base model's other loss weights, reasoning depth and refresh policy. Conflicting
+study labels or stacked conditions are rejected instead of silently replacing
+the base design.

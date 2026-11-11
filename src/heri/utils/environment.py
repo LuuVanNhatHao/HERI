@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import importlib.metadata
-import hashlib
 import os
 import platform
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from heri.utils.hashing import source_tree_sha256
 
 
 def _version(package: str) -> str | None:
@@ -56,21 +57,16 @@ def collect_environment_metadata(repo_root: str | Path = ".") -> dict[str, Any]:
         },
     }
     root = Path(repo_root)
-    digest = hashlib.sha256()
-    for path in sorted([
-        *root.joinpath("src").rglob("*.py"),
-        *root.joinpath("scripts").glob("*.py"),
-        *root.joinpath("config").rglob("*.yaml"),
-    ]):
-        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
-        digest.update(path.read_bytes().replace(b"\r\n", b"\n") + b"\0")
-    metadata["source_sha256"] = digest.hexdigest()
+    metadata["source_sha256"] = source_tree_sha256(root)
     metadata["paper_contract"] = "HERI"
-    metadata["paper_pdf_sha256"] = "eaf23fdfa531be2d92c83b93ada8d57360e7dea576450afb0e9211a1fdf2b095"
     try:
         status = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=root, check=True,
-            text=True, capture_output=True, timeout=10,
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            check=True,
+            text=True,
+            capture_output=True,
+            timeout=10,
         )
         metadata["git_dirty"] = bool(status.stdout.strip())
     except (OSError, subprocess.SubprocessError):

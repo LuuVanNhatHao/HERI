@@ -23,7 +23,7 @@ The Python package is `heri`; `scripts/heri.py` provides the command-line interf
 | Eq.22, p.19 | Image aggregation uses individual `p_k>=0.5`; empty if none; clip valid image and undo padding/resize | [src/heri/evaluation/hypothesis_grounding.py](../../src/heri/evaluation/hypothesis_grounding.py), [src/heri/evaluation/evaluator.py](../../src/heri/evaluation/evaluator.py) |
 | Eq.23-26, p.19 | Attribution/binary BCE; text BCE over valid entries; image SmoothL1+GIoU+0.25 patch BCE | [src/heri/losses/heri_components.py](../../src/heri/losses/heri_components.py), [src/heri/losses/box_grounding.py](../../src/heri/losses/box_grounding.py) |
 | Eq.27-28, p.19 | Per-positive-hypothesis, per-applicable-modality sufficiency with annotation/position masks | [src/heri/losses/heri_components.py](../../src/heri/losses/heri_components.py) |
-| Eq.29, p.19 | Printed local/global alignment formula; stopped global teacher | [src/heri/evidence/cross_modal.py](../../src/heri/evidence/cross_modal.py) |
+| Eq.29, p.19 | Mean over valid text positions of their maximum image similarity; stopped native-global teacher | [src/heri/evidence/cross_modal.py](../../src/heri/evidence/cross_modal.py) |
 | Eq.30, pp.19-20 | Detached selection-derived reliability target in [0.5,1], mean=0.75 and std floor=0.05 | [src/heri/routing/router.py](../../src/heri/routing/router.py) |
 | Eq.31-32, p.20 | Predicted-positive/applicable/annotation-available domain; EDC is mean clipped support ratio, UDR is support below 0.5 | [src/heri/metrics/consistency.py](../../src/heri/metrics/consistency.py) |
 | Eq.33, p.22 | VSR@1 additionally requires true-positive hypothesis and correctly localized confident top-1 support | [src/heri/metrics/consistency.py](../../src/heri/metrics/consistency.py), [src/heri/evaluation/evaluator.py](../../src/heri/evaluation/evaluator.py) |
@@ -62,11 +62,18 @@ The Python package is `heri`; `scripts/heri.py` provides the command-line interf
 
 ## Implementation conventions
 
-1. **Eq.29 denominator.** The printed expression sums over textual positions but
-   divides by the number of valid visual positions. The implementation follows
-   that printed denominator, including when the two counts differ. The prose
-   describes a local average; the visual-count denominator is retained as
-   printed and checked with unequal visual and text position counts.
+1. **Eq.29 normalization.** For each valid text position, take the maximum
+   initial similarity over valid image positions, then average these maxima
+   over the valid text positions. The denominator is `|V_T|`. Padding contributes
+   neither to the maximum nor to the text-position count; a valid zero or
+   negative maximum still contributes to the average. SmoothL1 compares this
+   local statistic with the detached cosine of the native image/text global
+   features. Losses are averaged across samples with both valid modalities;
+   samples without a valid image/text pair are excluded, and an entirely empty
+   domain returns differentiable zero. The objective is identified by
+   `loss.alignment.aggregation: valid_text_mean`; resume and evaluation compare
+   this field so a checkpoint trained with a different reduction is not silently
+   reused under the current objective.
 2. **Text evaluation unit.** Text grounding is evaluated at both subword and
    original-word resolution. Artifacts retain both native-token and original-word
    F1, their definitions, visible-word coverage and truncation false negatives.
@@ -74,10 +81,11 @@ The Python package is `heri`; `scripts/heri.py` provides the command-line interf
    Original-word metadata completeness is exported separately from annotation
    availability, so masked localization annotations do not invalidate an
    otherwise complete classification run.
-3. **Control readouts.** Table 7's intermediate stages, the no-hypothesis
-   readout and graph-attention variants require explicit readout choices.
-   Registered configurations define their construction; the
-   [graph implementation](graph_reasoning.md) records the operators being compared.
+3. **Control readouts.** Progressive stages define cumulative architectures,
+   while component controls test specific contrasts. The
+   [experimental designs](graph_reasoning.md#progressive-construction) state
+   their operators, readouts and combined changes. Removing hypothesis nodes
+   also replaces the hypothesis readout; that contrast measures both changes.
 4. **Grounding conventions.** HERI uses its configured preprocessing and
    tokenization. Released SAMM classification projection is explicit. All-sample
    image denominators and inverse geometry are implemented, but equal metric

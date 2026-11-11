@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 import copy
+import math
 from collections.abc import Mapping, MutableMapping
 from typing import Any
+
+from .design import describe_model_design
 
 PROGRESSIVE_VARIANTS = (
     "evidence_decomposition",
@@ -40,38 +43,7 @@ def get_hera_ablation_variant(config: Mapping[str, Any]) -> str | None:
 
 
 def _variant_contract(variant: str) -> dict[str, Any]:
-    expected = {
-        "project.architecture_version": "heri",
-        "dataset.use_mtcnn_boxes": False,
-        "graph.type": "hgt",
-        "graph.evidence_mode": "heterogeneous",
-        "graph.include_hypothesis_nodes": True,
-        "graph.reasoning.operator": "graph",
-        "graph.reasoning.hypothesis_feedback": True,
-        "graph.reasoning.cycles": 2,
-        "graph.reasoning.dynamic_rebuild": True,
-        "graph.reasoning.refresh_semantic": True,
-        "graph.reasoning.refresh_hypothesis": True,
-        "graph.reasoning.hypothesis_state": "evolved",
-        "graph.reasoning.hypothesis_edge_reweighting": "cosine",
-        "graph.edge_attention.enabled": True,
-        "graph.edge_attention.confidence_gate": "direct",
-        "graph.edge_attention.variant": "reliability_conditioned",
-        "graph.edges.feedback.enabled": True,
-        "graph.edges.cross_modal.enabled": True,
-        "evidence.visual_forensic.enabled": True,
-        "routing.enabled": True,
-        "routing.regularization.enabled": True,
-        "routing.regularization.weight": 0.05,
-        "loss.lambda_ev": 0.1,
-        "model.grounding.mode": "hypothesis_conditioned",
-        "model.grounding.image.protocol": "dense_bbox",
-        "model.binary.aggregation": "noisy_or",
-        "loss.evidence_sufficiency.protocol": "per_modality_v1",
-        "loss.evidence_sufficiency.aggregation": "per_modality",
-        "loss.evidence_sufficiency.validity": "positive_hypothesis_and_valid_annotation",
-        "loss.evidence_sufficiency.empty_policy": "differentiable_zero",
-    }
+    """Specify only the mechanisms intentionally changed by an intervention."""
     updates = {
         "no_router": {
             "routing.enabled": False,
@@ -94,9 +66,7 @@ def _variant_contract(variant: str) -> dict[str, Any]:
         "no_cross_modal_edges": {"graph.edges.cross_modal.enabled": False},
         "no_forensic_evidence": {"evidence.visual_forensic.enabled": False},
         "no_evidence_sufficiency": {"loss.lambda_ev": 0.0},
-        "no_reliability_attention": {
-            "graph.edge_attention.variant": "similarity_conditioned"
-        },
+        "no_reliability_attention": {"graph.edge_attention.variant": "similarity_conditioned"},
         "standard_hgt": {"graph.edge_attention.variant": "standard"},
         "edge_residual": {"graph.edge_attention.variant": "edge_residual"},
         "similarity_conditioned_attention": {
@@ -108,30 +78,30 @@ def _variant_contract(variant: str) -> dict[str, Any]:
             "loss.evidence_sufficiency.validity": "unmasked_legacy",
         },
     }
-    expected.update(updates.get(variant, {}))
-    if variant in PROGRESSIVE_VARIANTS:
-        expected.update(
-            {
-                "graph.reasoning.cycles": 1,
-                "graph.reasoning.dynamic_rebuild": False,
-                "graph.reasoning.refresh_semantic": False,
-                "graph.reasoning.refresh_hypothesis": False,
-            }
-        )
-        if variant != "constrained_single_pass":
-            expected.update(
-                {"model.binary.aggregation": "independent_head", "loss.lambda_ev": 0.0}
-            )
-        if variant in {"evidence_decomposition", "reliability_router"}:
-            expected["graph.reasoning.operator"] = "pooled"
-        if variant == "evidence_decomposition":
-            expected.update(updates["no_router"])
+    if variant not in PROGRESSIVE_VARIANTS:
+        return updates[variant]
+    pooled_stage = variant in {"evidence_decomposition", "reliability_router"}
+    expected = {
+        "graph.reasoning.cycles": 1,
+        "graph.reasoning.dynamic_rebuild": False,
+        "graph.reasoning.refresh_semantic": False,
+        "graph.reasoning.refresh_hypothesis": False,
+        "graph.reasoning.operator": "pooled" if pooled_stage else "graph",
+        "graph.include_hypothesis_nodes": not pooled_stage,
+        "model.binary.aggregation": (
+            "noisy_or" if variant == "constrained_single_pass" else "independent_head"
+        ),
+    }
+    if variant != "constrained_single_pass":
+        expected["loss.lambda_ev"] = 0.0
+    if variant == "evidence_decomposition":
+        expected.update(updates["no_router"])
+    else:
+        expected.update({"routing.enabled": True, "routing.regularization.enabled": True})
     return expected
 
 
-def apply_hera_ablation_variant(
-    config: Mapping[str, Any], variant: str
-) -> dict[str, Any]:
+def apply_hera_ablation_variant(config: Mapping[str, Any], variant: str) -> dict[str, Any]:
     variant = str(variant).strip()
     if variant not in HERA_ABLATION_VARIANTS:
         raise ValueError(
@@ -141,18 +111,34 @@ def apply_hera_ablation_variant(
         _get(config, "model.model_type") != "hera"
         or _get(config, "model.baseline_type") is not None
     ):
-        raise ValueError(
-            "HERI ablations require a HERI base config; B0/B1 are forbidden"
-        )
+        raise ValueError("HERI ablations require a HERI base config; B0/B1 are forbidden")
     if bool(_get(config, "cycle_study.enabled", False)):
         raise ValueError("Component controls cannot combine with cycle studies")
+    if (
+        bool(_get(config, "ablation.enabled", False))
+        and get_hera_ablation_variant(config) != variant
+    ):
+        raise ValueError(
+            "Different ablations cannot be layered; derive each variant from its base experiment"
+        )
+    if (
+        _get(config, "model.binary.aggregation") == "independent_head"
+        and variant != "independent_binary"
+        and variant not in PROGRESSIVE_VARIANTS
+    ):
+        raise ValueError(
+            f"An independent-head base is not supported by {variant!r}; "
+            "the direct-head output contract requires an independent_binary or progressive control"
+        )
     result = copy.deepcopy(dict(config))
     _set(result, "ablation.enabled", True)
     _set(result, "ablation.variant", variant)
     for key, value in _variant_contract(variant).items():
         _set(result, key, value)
     if variant in PROGRESSIVE_VARIANTS:
-        _set(result, "ablation.operationalization", "table7_pooled_readout")
+        design = describe_model_design(result)
+        _set(result, "ablation.readout", design["model"]["readout"])
+        _set(result, "ablation.experimental_design", design)
     validate_hera_ablation_contract(result)
     return result
 
@@ -169,9 +155,14 @@ def validate_hera_ablation_contract(config: Mapping[str, Any]) -> None:
     for key, expected in _variant_contract(variant).items():
         actual = _get(config, key)
         if actual != expected:
-            raise ValueError(
-                f"Ablation {variant!r} requires {key}={expected!r}, got {actual!r}"
-            )
+            raise ValueError(f"Ablation {variant!r} requires {key}={expected!r}, got {actual!r}")
+    if variant == "constrained_single_pass":
+        try:
+            evidence_weight = float(_get(config, "loss.lambda_ev"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("constrained_single_pass requires a positive loss.lambda_ev") from exc
+        if not math.isfinite(evidence_weight) or evidence_weight <= 0:
+            raise ValueError("constrained_single_pass requires a positive loss.lambda_ev")
 
 
 def validate_hera_checkpoint_variant(
@@ -188,39 +179,38 @@ def validate_hera_checkpoint_variant(
     )
 
     current_variant = get_hera_ablation_variant(current_config)
+    current_alignment = _get(current_config, "loss.alignment.aggregation")
+    checkpoint_alignment = _get(checkpoint_config, "loss.alignment.aggregation")
+    if current_alignment != "valid_text_mean" or checkpoint_alignment != current_alignment:
+        raise ValueError(
+            f"{context} checkpoint alignment-objective mismatch: "
+            f"current={current_alignment!r}, checkpoint={checkpoint_alignment!r}"
+        )
     for key in ("project.seed", "dataloader.seed"):
         if _get(current_config, key) != _get(checkpoint_config, key):
             raise ValueError(f"{context} checkpoint {key} mismatch")
-    if current_config.get("dataset", {}).get("name") != checkpoint_config.get(
-        "dataset", {}
-    ).get("name"):
+    if current_config.get("dataset", {}).get("name") != checkpoint_config.get("dataset", {}).get(
+        "name"
+    ):
         raise ValueError(f"{context} checkpoint dataset mismatch")
-    if current_config.get("dataset", {}).get("root") != checkpoint_config.get(
-        "dataset", {}
-    ).get("root"):
+    if current_config.get("dataset", {}).get("root") != checkpoint_config.get("dataset", {}).get(
+        "root"
+    ):
         raise ValueError(f"{context} checkpoint dataset root mismatch")
-    if current_config.get("model", {}).get("hypotheses") != checkpoint_config.get(
-        "model", {}
-    ).get("hypotheses"):
+    if current_config.get("model", {}).get("hypotheses") != checkpoint_config.get("model", {}).get(
+        "hypotheses"
+    ):
         raise ValueError(f"{context} checkpoint hypothesis ontology mismatch")
-    if current_config.get("dataset_hashes", {}) != checkpoint_config.get(
-        "dataset_hashes", {}
-    ):
+    if current_config.get("dataset_hashes", {}) != checkpoint_config.get("dataset_hashes", {}):
         raise ValueError(f"{context} checkpoint dataset hash mismatch")
-    if current_config.get("scientific_study", {}) != checkpoint_config.get(
-        "scientific_study", {}
-    ):
+    if current_config.get("scientific_study", {}) != checkpoint_config.get("scientific_study", {}):
         raise ValueError(f"{context} checkpoint scientific-study mismatch")
     if current_config.get("reasoning_control", {}) != checkpoint_config.get(
         "reasoning_control", {}
     ):
         raise ValueError(f"{context} checkpoint reasoning-control mismatch")
-    current_evidence_loss = current_config.get("loss", {}).get(
-        "evidence_sufficiency", {}
-    )
-    checkpoint_evidence_loss = checkpoint_config.get("loss", {}).get(
-        "evidence_sufficiency", {}
-    )
+    current_evidence_loss = current_config.get("loss", {}).get("evidence_sufficiency", {})
+    checkpoint_evidence_loss = checkpoint_config.get("loss", {}).get("evidence_sufficiency", {})
     if current_evidence_loss != checkpoint_evidence_loss:
         raise ValueError(
             f"{context} checkpoint evidence-sufficiency protocol mismatch: "
@@ -234,10 +224,7 @@ def validate_hera_checkpoint_variant(
         raise ValueError(f"{context} checkpoint is not a HERA checkpoint")
     current_architecture = _get(current_config, "project.architecture_version")
     checkpoint_architecture = _get(checkpoint_config, "project.architecture_version")
-    if (
-        checkpoint_architecture != current_architecture
-        or current_architecture != "heri"
-    ):
+    if checkpoint_architecture != current_architecture or current_architecture != "heri":
         raise ValueError(
             f"{context} checkpoint architecture mismatch: current={current_architecture!r}, "
             f"checkpoint={checkpoint_architecture!r}; HERI requires 'heri'"

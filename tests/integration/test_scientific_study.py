@@ -271,7 +271,8 @@ def test_aggregator_pairs_by_seed_and_rejects_legacy_or_partial_results(tmp_path
                 writer.writerow(row)
             manifest["jobs"].append({"variant": variant, "seed": seed, "summary": str(path)})
     report = aggregate_study(manifest)
-    assert report["status"] == "complete"
+    assert report["status"] == "unverified"
+    assert report["evidence_status"] == "not_checked"
     assert report["paired_full_minus_control"]["b1"]["cf1_fixed"]["mean"] == pytest.approx(0.1)
     path.write_text(path.read_text().replace(EVALUATION_PROTOCOL, "legacy"), encoding="utf-8")
     with pytest.raises(ValueError, match="Unmatched"):

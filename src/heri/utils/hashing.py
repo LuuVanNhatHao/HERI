@@ -29,3 +29,21 @@ def sha256_file(path: str | Path, *, progress: bool = True, chunk_size: int = 10
             digest.update(chunk)
             iterator.update(len(chunk))
     return digest.hexdigest()
+
+
+def source_tree_sha256(repo_root: str | Path) -> str:
+    """Identify executable source, configurations and dependency constraints."""
+    root = Path(repo_root)
+    files = [
+        *root.joinpath("src").rglob("*.py"),
+        *root.joinpath("scripts").glob("*.py"),
+        *root.joinpath("config").rglob("*.yaml"),
+        *root.joinpath("requirements").glob("*.txt"),
+        root / "pyproject.toml",
+        root / "requirements.txt",
+    ]
+    digest = hashlib.sha256()
+    for path in sorted(path for path in files if path.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+    return digest.hexdigest()

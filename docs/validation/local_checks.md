@@ -55,8 +55,11 @@ See [test organization](../../tests/README.md) for module responsibilities.
   image/hypothesis pair, then pairs are averaged equally. Unequal valid patch
   counts are checked explicitly.
 - **Alignment and reliability (Eq.29-30).** Hand-computed cases use unequal
-  visual/text position counts and the printed visual-count denominator.
-  Calibration tests check the pooled-node regularizer and detached teacher.
+  visual/text position counts and divide by the valid text count. Padding,
+  valid zero/negative maxima, empty modalities and mixed valid/empty batches
+  test the reduction domain. Gradient checks keep the native-global teacher
+  detached while allowing gradients through local similarities. Reliability
+  tests check the pooled-node regularizer and detached selection targets.
 - **Verified evidence (Eq.31-33).** Tests check EDC's unweighted mean of clipped
   support ratios, UDR's support threshold and the confidence/location
   requirements of top-1 verified support.
@@ -93,10 +96,19 @@ Experiment tests validate fixed thresholds, registered controls and matched
 seeds 7/21/101. Dry-run materialization validates full effective configurations
 without loading a model. Aggregate reports retain incomplete jobs as pending.
 
+Alignment-objective identity is checked when resuming or evaluating a model.
+Study provenance checks distinguish missing artifacts from inconsistent ones
+and require internally consistent run evidence before scientific aggregation.
+These checks concern the recorded experiment, not the identity of unavailable
+original runs.
+
 ## Full experimental validation
 
 Synthetic verification establishes the tested implementation behavior.
 Benchmark performance, resource measurements and statistical comparisons
 require the configured pretrained backbones, complete datasets and full
-training/evaluation runs. Optional GAT controls additionally require
-`torch-geometric`; canonical HGT uses native PyTorch attention.
+training/evaluation runs. Canonical HGT uses native PyTorch attention.
+The optional GAT controls were not executed in the local environment because
+`torch-geometric` was unavailable. Their configuration/registration checks
+are separate from GAT runtime validation; installing PyG is required to run
+the actual GAT operator.

@@ -15,7 +15,7 @@ def cosine_similarity_metadata(
     native_image_global: torch.Tensor | None = None,
     native_text_global: torch.Tensor | None = None,
 ) -> CrossModalMetadata:
-    """initial semantic relation in the common projected evidence space."""
+    """Initial semantic relation in the common projected evidence space."""
 
     if visual.features.shape[-1] != text.features.shape[-1]:
         raise ValueError("Cross-modal cosine requires the shared evidence dimension")
@@ -50,6 +50,11 @@ def _native_global_calibration_loss(
     native_image_global: torch.Tensor | None,
     native_text_global: torch.Tensor | None,
 ) -> torch.Tensor:
+    """Calibrate mean text-to-image local similarity against a detached teacher."""
+
+    # Similarity reductions and the native cosine target stay in FP32 even
+    # when the surrounding encoder/evidence computation uses mixed precision.
+    similarity = similarity.float()
     zero = similarity.sum() * 0.0
     if native_image_global is None or native_text_global is None:
         return zero
@@ -63,11 +68,11 @@ def _native_global_calibration_loss(
     masked = similarity.masked_fill(~valid, torch.finfo(similarity.dtype).min)
     best_visual_per_text = masked.max(dim=1).values
     valid_text = valid.any(dim=1)
-    # Literal Eq.29 denominator is |V_I|, although the numerator sums
-    # over text locations. Preserve this declared contract explicitly.
-    valid_visual = valid.any(dim=2)
-    local = (best_visual_per_text.masked_fill(~valid_text, 0.0).sum(dim=1) /
-             valid_visual.sum(dim=1).clamp_min(1))
+    # Eq.29 averages one visual maximum per valid text position. Padding and
+    # text positions without any valid visual counterpart do not enter the mean.
+    local = best_visual_per_text.masked_fill(~valid_text, 0.0).sum(dim=1) / (
+        valid_text.sum(dim=1).clamp_min(1)
+    )
     usable = valid_text.any(dim=1)
     if not bool(usable.any()):
         return zero

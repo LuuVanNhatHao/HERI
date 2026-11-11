@@ -39,13 +39,19 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         if self.cycles < 1 or self.cycles > 3:
             raise ValueError("Graph reasoning cycles must be in the supported study range [1,3]")
         self.dynamic_rebuild = bool(config["reasoning"].get("dynamic_rebuild", False))
-        self.refresh_semantic = bool(config["reasoning"].get("refresh_semantic", self.dynamic_rebuild))
-        self.refresh_hypothesis = bool(config["reasoning"].get("refresh_hypothesis", self.dynamic_rebuild))
+        self.refresh_semantic = bool(
+            config["reasoning"].get("refresh_semantic", self.dynamic_rebuild)
+        )
+        self.refresh_hypothesis = bool(
+            config["reasoning"].get("refresh_hypothesis", self.dynamic_rebuild)
+        )
         self.hypothesis_state = str(config["reasoning"].get("hypothesis_state", "evolved"))
-        if self.hypothesis_state not in {"initial","evolved"}:
+        if self.hypothesis_state not in {"initial", "evolved"}:
             raise ValueError("graph.reasoning.hypothesis_state must be initial or evolved")
         self.pooled = config["reasoning"].get("operator", "graph") == "pooled"
-        self.include_hypothesis_nodes = bool(config.get("include_hypothesis_nodes",True)) and not self.pooled
+        self.include_hypothesis_nodes = (
+            bool(config.get("include_hypothesis_nodes", True)) and not self.pooled
+        )
         if self.dynamic_rebuild and self.cycles < 2:
             raise ValueError("dynamic hypothesis refinement requires graph.reasoning.cycles >= 2")
         self.hypotheses = HypothesisNodeInitializer(config)
@@ -55,8 +61,9 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             input_dims=config.get("input_dims", {}),
         )
         if not self.include_hypothesis_nodes:
-            self.pooled_readout = nn.Linear(self.hidden_dim * 4,
-                                           self.hidden_dim * len(self.hypothesis_spec.order))
+            self.pooled_readout = nn.Linear(
+                self.hidden_dim * 4, self.hidden_dim * len(self.hypothesis_spec.order)
+            )
             self.hypotheses.requires_grad_(False)
         encoder_kwargs = {
             "hidden_dim": self.hidden_dim,
@@ -65,19 +72,27 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             "dropout": float(config["dropout"]),
             "edge_types": self.builder.edge_types,
         }
+        attention_config = config.get("edge_attention", {})
+        attention_variant = (
+            attention_config.get("variant", "reliability_conditioned")
+            if bool(attention_config.get("enabled", True))
+            else "standard"
+        )
         if self.graph_type == "gatv2":
-            self.gatv2 = GATv2GraphEncoder(**encoder_kwargs, homogeneous=self.evidence_mode == "homogeneous")
+            self.gatv2 = GATv2GraphEncoder(
+                **encoder_kwargs, homogeneous=self.evidence_mode == "homogeneous"
+            )
             self._encoder_name = "gatv2"
         elif self.evidence_mode == "homogeneous":
-            self.homogeneous_hgt = HomogeneousEvidenceHGTEncoder(**encoder_kwargs,
-                variant=config.get("edge_attention",{}).get("variant","reliability_conditioned"))
+            self.homogeneous_hgt = HomogeneousEvidenceHGTEncoder(
+                **encoder_kwargs, variant=attention_variant
+            )
             self._encoder_name = "homogeneous_hgt"
         else:
-            self.hgt = HGTGraphEncoder(**encoder_kwargs,
-                variant=config.get("edge_attention",{}).get("variant","reliability_conditioned"))
+            self.hgt = HGTGraphEncoder(**encoder_kwargs, variant=attention_variant)
             self._encoder_name = "hgt"
         if self.pooled:
-            getattr(self,self._encoder_name).requires_grad_(False)
+            getattr(self, self._encoder_name).requires_grad_(False)
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "HypothesisEvidenceGraphReasoner":
@@ -113,11 +128,21 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
             elif self.dynamic_rebuild:
                 if self.refresh_semantic:
                     current_evidence = _refresh_cross_modal_metadata(current_evidence)
-                graph = self.builder.build(current_evidence, current_hypotheses,
-                    support_hypothesis_features=(initial_hypotheses if self.hypothesis_state == "initial"
-                                                 else current_hypotheses))
-                graph = _select_refreshed_relations(graph, static_graph,
-                    semantic=self.refresh_semantic, hypothesis=self.refresh_hypothesis)
+                graph = self.builder.build(
+                    current_evidence,
+                    current_hypotheses,
+                    support_hypothesis_features=(
+                        initial_hypotheses
+                        if self.hypothesis_state == "initial"
+                        else current_hypotheses
+                    ),
+                )
+                graph = _select_refreshed_relations(
+                    graph,
+                    static_graph,
+                    semantic=self.refresh_semantic,
+                    hypothesis=self.refresh_hypothesis,
+                )
                 graph_build_count += 1
             else:
                 if static_graph is None or not x_dict:
@@ -130,24 +155,30 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
                     cycle_index=cycle_index,
                 )
             encoder = getattr(self, self._encoder_name)
-            x_dict = dict(graph.x_dict) if self.pooled else encoder(graph.x_dict, graph.edge_index_dict, graph.edge_attr_dict)
+            x_dict = (
+                dict(graph.x_dict)
+                if self.pooled
+                else encoder(graph.x_dict, graph.edge_index_dict, graph.edge_attr_dict)
+            )
             if self.include_hypothesis_nodes:
                 current_hypotheses = _unflatten_hypotheses(
-                    x_dict[HYPOTHESIS], batch_size=batch_size,
+                    x_dict[HYPOTHESIS],
+                    batch_size=batch_size,
                     hypothesis_count=len(self.hypothesis_spec.order),
                 )
             else:
                 pooled = []
-                for family in (VISUAL_SEMANTIC,VISUAL_FORENSIC,TEXT_ALIGNMENT,TEXT_CONTEXT):
+                for family in (VISUAL_SEMANTIC, VISUAL_FORENSIC, TEXT_ALIGNMENT, TEXT_CONTEXT):
                     store = x_dict[family]
-                    local = store.new_zeros((batch_size,self.hidden_dim))
-                    counts = store.new_zeros((batch_size,1))
+                    local = store.new_zeros((batch_size, self.hidden_dim))
+                    counts = store.new_zeros((batch_size, 1))
                     samples = graph.node_sample_indices[family]
-                    local.index_add_(0,samples,store)
-                    counts.index_add_(0,samples,store.new_ones((store.shape[0],1)))
+                    local.index_add_(0, samples, store)
+                    counts.index_add_(0, samples, store.new_ones((store.shape[0], 1)))
                     pooled.append(local / counts.clamp_min(1))
-                current_hypotheses = self.pooled_readout(torch.cat(pooled,dim=-1)).reshape(
-                    batch_size,len(self.hypothesis_spec.order),self.hidden_dim)
+                current_hypotheses = self.pooled_readout(torch.cat(pooled, dim=-1)).reshape(
+                    batch_size, len(self.hypothesis_spec.order), self.hidden_dim
+                )
             intermediate.append(current_hypotheses)
             current_evidence = _refined_evidence_batch(current_evidence, graph, x_dict)
             cycle_statistics.append(graph_statistics(graph))
@@ -198,9 +229,14 @@ class HypothesisEvidenceGraphReasoner(nn.Module):
         return getattr(self, self._encoder_name)
 
 
-def _rebuild_mode(*, cycles: int, dynamic_rebuild: bool,
-                  refresh_semantic: bool = True, refresh_hypothesis: bool = True,
-                  hypothesis_state: str = "evolved") -> str:
+def _rebuild_mode(
+    *,
+    cycles: int,
+    dynamic_rebuild: bool,
+    refresh_semantic: bool = True,
+    refresh_hypothesis: bool = True,
+    hypothesis_state: str = "evolved",
+) -> str:
     if cycles == 1:
         return "none"
     if not dynamic_rebuild or not (refresh_semantic or refresh_hypothesis):
@@ -212,18 +248,24 @@ def _rebuild_mode(*, cycles: int, dynamic_rebuild: bool,
     return "initial_hypothesis" if hypothesis_state == "initial" else "state_dependent"
 
 
-def _select_refreshed_relations(graph: Any, initial: Any, *, semantic: bool, hypothesis: bool) -> Any:
+def _select_refreshed_relations(
+    graph: Any, initial: Any, *, semantic: bool, hypothesis: bool
+) -> Any:
     """Refresh only preregistered relation families while retaining current nodes."""
-    edges, attrs, samples = dict(graph.edge_index_dict),dict(graph.edge_attr_dict),dict(graph.edge_sample_indices)
+    edges, attrs, samples = (
+        dict(graph.edge_index_dict),
+        dict(graph.edge_attr_dict),
+        dict(graph.edge_sample_indices),
+    )
     for relation in edges:
         is_semantic = relation[1] == SEMANTIC_ALIGNS
         is_hypothesis = relation[0] == HYPOTHESIS or relation[2] == HYPOTHESIS
         refresh = semantic if is_semantic else hypothesis if is_hypothesis else False
         if not refresh:
-            edges[relation]=initial.edge_index_dict[relation]
-            attrs[relation]=initial.edge_attr_dict[relation]
-            samples[relation]=initial.edge_sample_indices[relation]
-    return replace(graph,edge_index_dict=edges,edge_attr_dict=attrs,edge_sample_indices=samples)
+            edges[relation] = initial.edge_index_dict[relation]
+            attrs[relation] = initial.edge_attr_dict[relation]
+            samples[relation] = initial.edge_sample_indices[relation]
+    return replace(graph, edge_index_dict=edges, edge_attr_dict=attrs, edge_sample_indices=samples)
 
 
 def _reuse_static_graph(
@@ -308,7 +350,9 @@ def _refined_evidence_batch(
     )
 
 
-def _refresh_cross_modal_metadata(evidence: HeterogeneousEvidenceBatch) -> HeterogeneousEvidenceBatch:
+def _refresh_cross_modal_metadata(
+    evidence: HeterogeneousEvidenceBatch,
+) -> HeterogeneousEvidenceBatch:
     """Re-query semantic edges from the refined evidence state before the next cycle."""
 
     visual = evidence.visual_semantic
@@ -335,7 +379,7 @@ def _refresh_cross_modal_metadata(evidence: HeterogeneousEvidenceBatch) -> Heter
             * text_reliability.float().unsqueeze(1).clamp_min(0.0)
         ).clamp_min(1e-16)
     )
-    confidence = confidence * ((1.0 + similarity) * 0.5).clamp(0.0,1.0)
+    confidence = confidence * ((1.0 + similarity) * 0.5).clamp(0.0, 1.0)
     confidence = confidence.clamp_min(1e-8)
     confidence = confidence.masked_fill(~valid, 0.0)
     previous = evidence.cross_modal_metadata

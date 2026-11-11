@@ -55,7 +55,7 @@ def test_masked_annotations_do_not_invalidate_complete_run_identity(
             writer.writerow(row)
 
     write()
-    assert aggregate_study(manifest)["status"] == "complete"
+    assert aggregate_study(manifest)["status"] == "unverified"
     row["text_original_word_metadata_complete"] = False
     write()
     with pytest.raises(ValueError, match="original-word"):
@@ -118,7 +118,8 @@ def test_rejects_protocol_drift_and_registers_real_controls() -> None:
     )
     pooled = apply_hera_ablation_variant(canonical, "evidence_decomposition")
     assert pooled["graph"]["reasoning"]["operator"] == "pooled"
-    assert pooled["ablation"]["operationalization"] == "table7_pooled_readout"
+    assert pooled["ablation"]["readout"] == "family_mean_projection"
+    assert pooled["ablation"]["experimental_design"]["graph"]["message_passing"] is False
 
 
 def test_paper_suites_materialize_without_results(tmp_path: Path) -> None:

@@ -104,7 +104,7 @@ def test_structural_neighbors_exclude_self_and_preserve_original_token_order():
     }
 
 
-def test_literal_alignment_denominator_and_empty_visual_store():
+def test_alignment_averages_valid_text_positions_with_unequal_modality_lengths():
     similarity = torch.tensor([[[0.8, 0.6, 0.4], [0.1, 0.2, 0.3]]], requires_grad=True)
     valid = torch.ones_like(similarity, dtype=torch.bool)
     globals = torch.tensor([[1.0, 0.0]])
@@ -114,15 +114,88 @@ def test_literal_alignment_denominator_and_empty_visual_store():
         native_image_global=globals,
         native_text_global=globals,
     )
-    assert torch.allclose(loss, torch.tensor(0.005), atol=1e-7)  # sum maxima / 2 = .9, target = 1
-    empty = similarity[:, :0]
+    # (0.8 + 0.6 + 0.4) / 3 = 0.6; SmoothL1(0.6, 1) = 0.08.
+    assert torch.allclose(loss, torch.tensor(0.08), atol=1e-7)
+
+
+@pytest.mark.parametrize("empty_modality", ["visual", "text"])
+def test_alignment_empty_modality_returns_differentiable_zero(empty_modality):
+    similarity = torch.ones(1, 2, 3, requires_grad=True)
+    valid = torch.ones_like(similarity, dtype=torch.bool)
+    globals = torch.tensor([[1.0, 0.0]])
+    empty = similarity[:, :0] if empty_modality == "visual" else similarity[:, :, :0]
+    empty_valid = valid[:, :0] if empty_modality == "visual" else valid[:, :, :0]
     zero = _native_global_calibration_loss(
         similarity=empty,
-        valid=valid[:, :0],
+        valid=empty_valid,
         native_image_global=globals,
         native_text_global=globals,
     )
     assert zero.item() == 0 and zero.requires_grad
+    zero.backward()
+    assert torch.equal(similarity.grad, torch.zeros_like(similarity))
+
+
+def test_alignment_excludes_padding_and_empty_rows_but_counts_zero_and_negative_matches():
+    similarity = torch.tensor(
+        [
+            [[-0.8, 0.0, 0.4, 10.0], [-0.2, -0.1, 0.2, 10.0], [9.0, 9.0, 9.0, 9.0]],
+            [[0.8, 0.6, 0.4, 0.2], [0.8, 0.6, 0.4, 0.2], [0.8, 0.6, 0.4, 0.2]],
+        ],
+        requires_grad=True,
+    )
+    visual_mask = torch.tensor([[True, True, False], [False, False, False]])
+    text_mask = torch.tensor([[True, True, True, False], [True, True, True, True]])
+    valid = visual_mask.unsqueeze(2) & text_mask.unsqueeze(1)
+    image_global = torch.tensor([[1.0, 0.0], [1.0, 0.0]], requires_grad=True)
+    text_global = torch.tensor([[0.0, 1.0], [1.0, 0.0]], requires_grad=True)
+    loss = _native_global_calibration_loss(
+        similarity=similarity,
+        valid=valid,
+        native_image_global=image_global,
+        native_text_global=text_global,
+    )
+    # Only row 0 is usable; its three maxima are -0.2, 0.0 and 0.4.
+    local_mean = 0.2 / 3
+    assert loss.item() == pytest.approx(0.5 * local_mean**2)
+    loss.backward()
+    expected_gradient = torch.zeros_like(similarity)
+    expected_gradient[0, 1, 0] = local_mean / 3
+    expected_gradient[0, 0, 1:3] = local_mean / 3
+    assert torch.allclose(similarity.grad, expected_gradient)
+    assert image_global.grad is None and text_global.grad is None
+
+
+def test_alignment_gives_each_usable_sample_equal_weight_after_its_text_mean():
+    similarity = torch.tensor([[[0.5, 5.0, 5.0]], [[0.2, 0.2, 0.2]]], requires_grad=True)
+    valid = torch.tensor([[[True, False, False]], [[True, True, True]]])
+    loss = _native_global_calibration_loss(
+        similarity=similarity,
+        valid=valid,
+        native_image_global=torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
+        native_text_global=torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
+    )
+    # Per-sample SmoothL1 values are 0.125 and 0.02, averaged equally.
+    assert loss.item() == pytest.approx(0.0725)
+
+
+def test_alignment_reduction_is_fp32_under_bfloat16_autocast():
+    similarity = torch.tensor(
+        [[[0.5, 0.25, 0.0], [0.1, 0.0, -0.1]]], dtype=torch.bfloat16, requires_grad=True
+    )
+    globals = torch.tensor([[1.0, 0.0]], requires_grad=True)
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        loss = _native_global_calibration_loss(
+            similarity=similarity,
+            valid=torch.ones_like(similarity, dtype=torch.bool),
+            native_image_global=globals,
+            native_text_global=globals,
+        )
+    assert loss.dtype == torch.float32
+    assert loss.item() == pytest.approx(0.28125)  # SmoothL1(0.25, 1).
+    loss.backward()
+    assert torch.isfinite(similarity.grad).all()
+    assert globals.grad is None
 
 
 def test_native_segment_softmax_is_stable_differentiable_and_normalized_per_destination():

@@ -32,6 +32,10 @@ Substitute `samm` for the second protocol. Use `baselines/b0` or `baselines/b1` 
 
 Losses use `per_modality_v1`: a sufficiency unit is a positive hypothesis with an applicable, annotated modality and at least one local evidence node. The named `any_modality_or` control is separate and cannot share a checkpoint identity.
 
+Alignment uses `loss.alignment.aggregation: valid_text_mean`: each valid text
+position contributes its maximum initial image similarity to a masked text
+mean. This objective identity is checked when loading a checkpoint.
+
 Primary thresholds are 0.5. An image prediction averages only hypotheses whose individual probability reaches 0.5; an empty active set emits an empty box. Text aggregation follows Eq.21 (`relative_soft`). DGM4 selects by `cf1_fixed`; SAMM selects by released three-label `samm_official_cf1`.
 
 Training seed 7 and matched seeds 7/21/101 are independent of SAMM subset seed 777. The schedule is 20 epochs, batch 16, frozen encoders for epochs 1–3 and full adaptation from epoch 4. AdamW uses encoder LR `2e-6`, module LR `1e-4`, weight decay 0.01, 500 warm-up steps and one global linear-decay clock. Early stopping is disabled.
@@ -58,4 +62,9 @@ python -B scripts/heri.py study samm config/experiments/samm/matched_multiseed.y
 
 Remove `--dry-run` to execute. Scientific studies additionally support `--variants`, `--seeds` and `--resume`. Resume targets a job's own checkpoint; source fingerprint and effective configuration hash must agree. Incomplete jobs remain pending in aggregate reports.
 
-The intermediate readouts and control operators are defined in [graph reasoning](../docs/method/graph_reasoning.md). The [implementation reference](../docs/method/paper_contract.md) defines equations, masks and experimental identity; [experiment documentation](../docs/experiments.md) describes artifacts and comparisons.
+Use `python -B scripts/heri.py audit-study path/to/manifest.json` to inspect
+configuration, checkpoint and evaluation-artifact consistency. The materialized
+manifest records the model designs and adjacent mechanism/configuration changes;
+it defines planned jobs rather than asserting that a corresponding run completed.
+
+The [progressive design table](../docs/method/graph_reasoning.md#progressive-construction) defines intermediate readouts and combined changes. It distinguishes cumulative architectural construction from single-factor component contrasts. The [implementation reference](../docs/method/paper_contract.md) defines equations and masks; [experiment provenance](../docs/experiments.md#experimental-provenance) describes the evidence required to associate configurations with completed results.
