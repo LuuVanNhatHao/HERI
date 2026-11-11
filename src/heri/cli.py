@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import platform
 import sys
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(*, repo_root: Path | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="heri", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
@@ -23,12 +24,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub = commands.add_parser("reconstruct-samm", help="Reconstruct frozen SAMM annotations")
     sub.add_argument("--source-root", type=Path, required=True)
     sub.add_argument("--output-root", type=Path, default=Path("data/SAMM"))
-    sub = commands.add_parser(
-        "validate", help="Bounded offline CPU equation and integration checks"
-    )
-    sub.add_argument(
-        "--section", choices=("all", "equations", "runtime", "integration", "config"), default="all"
-    )
+    sub.add_argument("--manifest", type=Path, default=Path("data/SAMM-20K/manifest.json"))
+    # Development checks remain available when the local, undistributed suite exists.
+    if ((repo_root or Path.cwd()) / "tests/contracts/test_paper_graph.py").is_file():
+        sub = commands.add_parser("validate", help="Run the locally available developer checks")
+        sub.add_argument(
+            "--section",
+            choices=("all", "equations", "runtime", "integration", "config"),
+            default="all",
+        )
     sub = commands.add_parser(
         "audit-study", help="Inspect actual study artifacts without loading models"
     )
@@ -57,8 +61,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     # Apply before importing torch, pytest or transformers, including child jobs.
     sys.dont_write_bytecode = True
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
-    args = build_parser().parse_args(argv)
     root = (repo_root or Path.cwd()).resolve()
+    args = build_parser(repo_root=root).parse_args(argv)
     os.chdir(root)
     if args.command == "validate":
         from heri.validation import run_checks
@@ -138,13 +142,41 @@ def _reconstruct_samm(args: argparse.Namespace) -> int:
     from heri.data.samm import SAMM_EXPECTED_SHA256, SAMM_EXPECTED_SPLIT_ROWS
     from heri.data.samm_reconstruction import annotation_fingerprint, reconstruct_annotation_bytes
 
+    manifest_bytes = args.manifest.read_bytes()
+    published = json.loads(manifest_bytes)
+    if (
+        published.get("schema") != "heri_dataset_manifest"
+        or published.get("protocol_id") != "samm20k_seed777"
+        or published.get("selection", {}).get("seed") != 777
+        or published.get("selection", {}).get("train_size") != 20_000
+    ):
+        raise ValueError("Unsupported SAMM-20K manifest identity or selection recipe")
     payloads, records = {}, {}
     for split in ("train", "val", "test"):
-        source = json.loads((args.source_root / f"{split}.json").read_bytes())
+        source_bytes = (args.source_root / f"{split}.json").read_bytes()
+        source_identity = published["source_artifacts"][split]
+        if hashlib.sha256(source_bytes).hexdigest() != source_identity["sha256"]:
+            raise ValueError(f"Source {split} SHA-256 differs from the published manifest")
+        source = json.loads(source_bytes)
+        if len(source) != source_identity["rows"] or len(source_bytes) != source_identity["bytes"]:
+            raise ValueError(f"Source {split} size differs from the published manifest")
         if split == "train" and len(source) != 190_970:
             raise ValueError("Reconstruction requires the official 190970-row training source")
-        annotations, ids = reconstruct_annotation_bytes(source, split=split)
+        annotations, ids = reconstruct_annotation_bytes(
+            source,
+            split=split,
+            selected_train_ids=published["selected_train_ids"] if split == "train" else None,
+        )
         record = annotation_fingerprint(annotations, ids)
+        expected = published["splits"][split]
+        for key in ("rows", "sha256", "ordered_id_manifest_sha256"):
+            if record[key] != expected[key]:
+                raise ValueError(f"Reconstructed {split} {key} differs from the published manifest")
+        if (
+            split == "train"
+            and [int(value) for value in ids.splitlines()] != published["selected_train_ids"]
+        ):
+            raise ValueError("Selected training IDs differ from the published manifest")
         if (
             record["rows"] != SAMM_EXPECTED_SPLIT_ROWS[split]
             or record["sha256"] != SAMM_EXPECTED_SHA256[split]
@@ -160,6 +192,7 @@ def _reconstruct_samm(args: argparse.Namespace) -> int:
         "protocol_id": "samm20k_seed777",
         "selection_seed": 777,
         "python": platform.python_version(),
+        "published_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "splits": records,
         "exact_published_baseline_subset_identity": "not_established",
         "image_files_checked": False,

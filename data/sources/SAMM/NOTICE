@@ -1,0 +1,18 @@
+SAMM original annotation snapshot
+
+Dataset: SAMM (Semantic-Coordinated Multimodal Manipulation)
+Authors: Jinjie Shen, Yaxiong Wang, Lechao Chen, Pu Nan, Zhun Zhong
+Publication: Beyond Artificial Misalignment: Detecting and Grounding
+Semantic-Coordinated Multimodal Manipulation, ACM Multimedia 2025.
+Paper: https://arxiv.org/abs/2509.12653
+Dataset: https://huggingface.co/datasets/SJJ0854/SAMM
+Official code: https://github.com/shen8424/SAMM-RamDG-CAP
+
+The train.json, val.json and test.json files are unchanged copies of
+SAMM-without-CAP at publisher dataset revision:
+9ff6eafbe04f13e9ad8df6bc09a63f9f7a24f3f4
+
+The dataset card at that revision declares Apache License 2.0. A copy is
+included as LICENSE in this directory. The accompanying HERI subset manifest
+records the source identities and selection recipe. This distribution
+contains annotation JSON files only; image files must be obtained separately.

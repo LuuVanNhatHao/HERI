@@ -6,3 +6,6 @@
 *.md text eol=lf
 *.txt text eol=lf
 *.json text eol=lf
+
+# Preserve publisher annotation bytes and their declared SHA-256 identities.
+/data/sources/SAMM/*.json -text

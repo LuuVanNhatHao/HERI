@@ -1,7 +1,6 @@
 # Production CUDA 12.8 environment, all paper graph controls and local checks.
 --extra-index-url https://download.pytorch.org/whl/cu128
 -r requirements/runtime.txt
--r requirements/dev.txt
 torch==2.8.0+cu128
 torchvision==0.23.0+cu128
 torch-geometric==2.7.0

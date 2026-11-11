@@ -1,8 +1,23 @@
-# Data and experiment products (documentation stays versioned).
+# Public dataset manifests and original SAMM annotation snapshot.
 /data/*
 !/data/README.md
-/artifacts/*
-!/artifacts/README.md
+!/data/SAMM-20K/
+/data/SAMM-20K/*
+!/data/SAMM-20K/manifest.json
+!/data/sources/
+/data/sources/*
+!/data/sources/SAMM/
+/data/sources/SAMM/*
+!/data/sources/SAMM/train.json
+!/data/sources/SAMM/val.json
+!/data/sources/SAMM/test.json
+!/data/sources/SAMM/LICENSE
+!/data/sources/SAMM/NOTICE
+
+# Local research notes, checks and generated products are not distributed.
+/artifacts/
+/docs/
+/tests/
 
 # Python, test and analysis caches.
 __pycache__/

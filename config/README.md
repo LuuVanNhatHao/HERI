@@ -67,4 +67,4 @@ configuration, checkpoint and evaluation-artifact consistency. The materialized
 manifest records the model designs and adjacent mechanism/configuration changes;
 it defines planned jobs rather than asserting that a corresponding run completed.
 
-The [progressive design table](../docs/method/graph_reasoning.md#progressive-construction) defines intermediate readouts and combined changes. It distinguishes cumulative architectural construction from single-factor component contrasts. The [implementation reference](../docs/method/paper_contract.md) defines equations and masks; [experiment provenance](../docs/experiments.md#experimental-provenance) describes the evidence required to associate configurations with completed results.
+The [repository README](../README.md#controlled-experiments) describes cumulative construction, component contrasts and the operators being compared. Its [reproducibility section](../README.md#outputs-and-reproducibility) explains how configurations are associated with saved checkpoints and completed evaluations.

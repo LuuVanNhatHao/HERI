@@ -14,6 +14,7 @@ def reconstruct_annotation_bytes(
     split: str,
     train_size: int = 20_000,
     seed: int = 777,
+    selected_train_ids: Sequence[int] | None = None,
 ) -> tuple[bytes, bytes]:
     """Return compact UTF-8 annotations and decimal-ID/LF ordered manifest.
 
@@ -29,21 +30,34 @@ def reconstruct_annotation_bytes(
     if split == "train":
         if train_size < 1 or train_size > len(ids):
             raise ValueError("Training subset size exceeds the source population")
-        selected = sorted(random.Random(seed).sample(ids, train_size))
+        if selected_train_ids is None:
+            selected = sorted(random.Random(seed).sample(ids, train_size))
+        else:
+            selected = list(selected_train_ids)
+            if (
+                len(selected) != train_size
+                or any(type(value) is not int for value in selected)
+                or len(set(selected)) != len(selected)
+                or selected != sorted(selected)
+                or not set(selected).issubset(ids)
+            ):
+                raise ValueError(
+                    "Manifest training IDs must be sorted, unique source IDs of the declared size"
+                )
         by_id = {row["id"]: row for row in source_rows}
         rows = [dict(by_id[value]) for value in selected]
     else:
+        if selected_train_ids is not None:
+            raise ValueError("Explicit training IDs are supported only for the train split")
         rows = [dict(row) for row in source_rows]
     for row in rows:
         image = row["image"]
         if not isinstance(image, str) or image.startswith("images/"):
-            raise ValueError(
-                "Reconstruction requires original unprefixed SAMM image paths"
-            )
+            raise ValueError("Reconstruction requires original unprefixed SAMM image paths")
         row["image"] = "images/" + image
-    annotations = json.dumps(
-        rows, ensure_ascii=False, separators=(",", ":"), indent=None
-    ).encode("utf-8")
+    annotations = json.dumps(rows, ensure_ascii=False, separators=(",", ":"), indent=None).encode(
+        "utf-8"
+    )
     ordered_ids = "".join(f"{row['id']}\n" for row in rows).encode("utf-8")
     return annotations, ordered_ids
 
