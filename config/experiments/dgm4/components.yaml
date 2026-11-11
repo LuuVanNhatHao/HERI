@@ -1,0 +1,7 @@
+suite:
+  hera_train_config: config/datasets/dgm4/heri/train.yaml
+  b1_train_config: config/datasets/dgm4/baselines/b1/train.yaml
+  output_root: artifacts/experiments/heri/components
+  epochs: 20
+  seeds: [7]
+  variants: [full_hera, no_cross_modal_edges, single_pass, no_hypothesis_feedback, no_router, no_reliability_attention, no_forensic_evidence, no_evidence_sufficiency, standard_hgt, edge_residual, similarity_conditioned_attention]

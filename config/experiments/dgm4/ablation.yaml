@@ -1,16 +1,25 @@
 suite:
   name: hera_dgm4_controlled_ablation
-  base_train_config: config/datasets/dgm4/hera/train.yaml
-  base_evaluate_config: config/datasets/dgm4/hera/evaluate.yaml
-  output_root: outputs/hera_ablation
-  training_epochs: 12
+  base_train_config: config/datasets/dgm4/heri/train.yaml
+  base_evaluate_config: config/datasets/dgm4/heri/evaluate.yaml
+  output_root: artifacts/experiments/component_ablations
+  training_epochs: 20
   fail_fast: true
   variants:
-    - no_router
-    - homogeneous_evidence
-    - gatv2
-    - no_hypothesis_feedback
-    - generic_grounding
-    - independent_binary
+  - no_router
+  - homogeneous_evidence
+  - gatv2
+  - no_hypothesis_feedback
+  - generic_grounding
+  - independent_binary
+  - no_hypothesis_nodes
+  - no_cross_modal_edges
+  - no_reliability_attention
+  - no_forensic_evidence
+  - no_evidence_sufficiency
+  - homogeneous_gat
+  - standard_hgt
+  - edge_residual
+  - similarity_conditioned_attention
   environment:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True

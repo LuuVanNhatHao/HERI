@@ -1,0 +1,10 @@
+suite:
+  hera_train_config: config/datasets/dgm4/heri/train.yaml
+  b1_train_config: config/datasets/dgm4/baselines/b1/train.yaml
+  b0_train_config: config/datasets/dgm4/baselines/b0/train.yaml
+  output_root: artifacts/experiments/heri/progressive
+  epochs: 20
+  seeds: [7]
+  # Intermediate readouts operationalize the underspecified Table 7 stages.
+  # These jobs do not assert identity with historical paper experiments.
+  variants: [b0, b1, evidence_decomposition, reliability_router, hypothesis_evidence_graph, constrained_single_pass, full_hera]

@@ -1,0 +1,7 @@
+suite:
+  hera_train_config: config/datasets/dgm4/heri/train.yaml
+  b1_train_config: config/datasets/dgm4/baselines/b1/train.yaml
+  output_root: artifacts/experiments/heri/matched_components
+  epochs: 20
+  seeds: [7, 21, 101]
+  variants: [full_hera, no_hypothesis_nodes, independent_binary, homogeneous_gat]

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heri"
+version = "0.3.0"
+description = "Hypothesis-mediated evidence reinterpretation for grounded multimodal manipulation verification"
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[project.urls]
+Repository = "https://github.com/LuuVanNhatHao/HERI"
+
+[project.optional-dependencies]
+validation = ["pytest>=8.0,<10.0"]
+dev = ["pytest>=8.0,<10.0", "ruff>=0.9,<1.0"]
+gat = ["torch-geometric==2.7.0"]
+
+[project.scripts]
+heri = "heri.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["heri*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements/runtime.txt"]}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -60,7 +60,7 @@ smoke:
   inspect_batches: 1
 
 output:
-  root: outputs/data_preflight
+  root: artifacts/data/dgm4
 
 progress:
   enabled: true

@@ -1,7 +1,7 @@
 project:
-  name: HERA-DGM
-  seed: 42
-  architecture_version: baseline_dense_bbox_v1
+  name: HERI-DGM4
+  seed: 7
+  architecture_version: heri_baseline
   config_name: dgm4/baselines/b1/evaluate
   run_id: evaluate_baseline_b1
 dataset:
@@ -32,22 +32,34 @@ tokenizer:
 backbones:
   siglip2:
     name: google/siglip2-so400m-patch14-384
-    revision:
+    revision: null
     local_files_only: false
     trust_remote_code: false
-    image_mean: [0.5, 0.5, 0.5]
-    image_std: [0.5, 0.5, 0.5]
+    image_mean:
+    - 0.5
+    - 0.5
+    - 0.5
+    image_std:
+    - 0.5
+    - 0.5
+    - 0.5
     text_max_length: 64
   dinov3:
     name: facebook/dinov3-vitl16-pretrain-lvd1689m
-    revision:
+    revision: null
     local_files_only: false
     trust_remote_code: false
-    image_mean: [0.485, 0.456, 0.406]
-    image_std: [0.229, 0.224, 0.225]
+    image_mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    image_std:
+    - 0.229
+    - 0.224
+    - 0.225
   deberta:
     name: microsoft/deberta-v3-large
-    revision:
+    revision: null
     local_files_only: false
     trust_remote_code: false
 model:
@@ -65,17 +77,17 @@ loss:
     text_grounding: 1.0
 training:
   epochs: 20
-  micro_batch_size: 4
+  micro_batch_size: 16
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
-  resume_from:
+  resume_from: null
   auto_resume:
     enabled: false
-    run_dir:
+    run_dir: null
     checkpoint_name: last.pt
   early_stopping:
     enabled: false
-    metric: cf1
+    metric: cf1_fixed
     mode: max
     patience: 3
     min_delta: 0.001
@@ -88,53 +100,78 @@ training:
 optimizer:
   type: adamw
   lr_new: 0.0001
-  lr_backbones: {siglip2: 0.000002, dinov3: 0.000002, deberta: 0.000002}
+  lr_backbones:
+    siglip2: 2.0e-06
+    dinov3: 2.0e-06
+    deberta: 2.0e-06
   weight_decay: 0.01
   foreach: false
 scheduler:
   type: linear_warmup
   warmup_steps: 500
-  resume_horizon_policy: continue_from_checkpoint_lr
+  resume_horizon_policy: error
 thresholding:
-  enabled: true
-  binary: {objective: macro_f1, min: 0.05, max: 0.95, step: 0.01}
-  attribution: {mode: per_class, objective: f1, min: 0.05, max: 0.95, step: 0.01}
-  image_presence: {enabled: true, objective: macro_f1, min: 0.05, max: 0.95, step: 0.01}
+  enabled: false
+  binary:
+    objective: macro_f1
+    min: 0.05
+    max: 0.95
+    step: 0.01
+  attribution:
+    mode: per_class
+    objective: f1
+    min: 0.05
+    max: 0.95
+    step: 0.01
+  image_presence:
+    enabled: true
+    objective: macro_f1
+    min: 0.05
+    max: 0.95
+    step: 0.01
 checkpointing:
-  selection_metric: cf1
-  tie_breakers: [map, auc, text_f1, image_mean_iou]
+  selection_metric: cf1_fixed
+  tie_breakers:
+  - map
+  - auc
+  - text_f1
+  - image_mean_iou
   keep_best: true
   keep_last: true
   top_k: 0
 evaluation:
-  checkpoint_path:
-  thresholds_path:
+  checkpoint_path: null
+  thresholds_path: null
   split: test
   checkpoint_resolution:
     enabled: true
     mode: latest
-    output_root: outputs/baselines_final_clean
-    run_dir:
+    output_root: artifacts/experiments/baselines_heri
+    run_dir: null
     checkpoint_name: best.pt
     thresholds_name: best_thresholds.json
 dataloader:
-  batch_size: 4
+  batch_size: 16
   num_workers: 16
   worker_threads: 1
   pin_memory: true
   persistent_workers: true
   prefetch_factor: 2
-  shuffle: {train: true, val: false, test: false}
+  shuffle:
+    train: true
+    val: false
+    test: false
   drop_last: false
-  seed: 42
-  id_aware_sampler: {enabled: false}
+  seed: 7
+  id_aware_sampler:
+    enabled: false
 runtime:
   device: cuda
   precision: bf16
   model_dtype: fp32
   cuda_memory_logging:
     enabled: true
-  attn_implementation:
+  attn_implementation: null
   gradient_checkpointing:
     enabled: false
     only_trainable_backbones: true
@@ -143,13 +180,13 @@ runtime:
       siglip2: false
       dinov3: false
       deberta: false
-  max_train_batches:
-  max_val_batches:
-  max_test_batches:
+  max_train_batches: null
+  max_val_batches: null
+  max_test_batches: null
   fail_on_nan: true
 progress:
   enabled: true
 logging:
   level: INFO
 output:
-  root: outputs/baselines_final_clean_eval
+  root: artifacts/experiments/baselines_heri_eval

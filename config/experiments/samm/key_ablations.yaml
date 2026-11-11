@@ -1,12 +1,12 @@
 suite:
   name: hera_samm_key_ablations
-  base_train_config: config/datasets/samm/hera/train.yaml
-  base_evaluate_config: config/datasets/samm/hera/evaluate.yaml
-  output_root: outputs/samm/key_ablations
+  base_train_config: config/datasets/samm/heri/train.yaml
+  base_evaluate_config: config/datasets/samm/heri/evaluate.yaml
+  output_root: artifacts/experiments/samm/key_ablations_heri
   training_epochs: 20
   fail_fast: true
   variants:
-    - no_router
-    - generic_grounding
+  - no_router
+  - generic_grounding
   environment:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True

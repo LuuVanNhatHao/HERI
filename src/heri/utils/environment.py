@@ -1,0 +1,112 @@
+"""Runtime environment metadata collection."""
+
+from __future__ import annotations
+
+import importlib.metadata
+import hashlib
+import os
+import platform
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+def _version(package: str) -> str | None:
+    try:
+        return importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _git_commit(repo_root: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return None
+
+
+def collect_environment_metadata(repo_root: str | Path = ".") -> dict[str, Any]:
+    """Collect reproducibility-relevant environment metadata."""
+
+    metadata: dict[str, Any] = {
+        "python": sys.version,
+        "platform": platform.platform(),
+        "git_commit": _git_commit(Path(repo_root)),
+        "packages": {
+            "torch": _version("torch"),
+            "torchvision": _version("torchvision"),
+            "torch-geometric": _version("torch-geometric"),
+            "transformers": _version("transformers"),
+            "tokenizers": _version("tokenizers"),
+            "Pillow": _version("Pillow"),
+            "numpy": _version("numpy"),
+            "pandas": _version("pandas"),
+            "scikit-learn": _version("scikit-learn"),
+            "PyYAML": _version("PyYAML"),
+            "tqdm": _version("tqdm"),
+        },
+    }
+    root = Path(repo_root)
+    digest = hashlib.sha256()
+    for path in sorted([
+        *root.joinpath("src").rglob("*.py"),
+        *root.joinpath("scripts").glob("*.py"),
+        *root.joinpath("config").rglob("*.yaml"),
+    ]):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+    metadata["source_sha256"] = digest.hexdigest()
+    metadata["paper_contract"] = "HERI"
+    metadata["paper_pdf_sha256"] = "eaf23fdfa531be2d92c83b93ada8d57360e7dea576450afb0e9211a1fdf2b095"
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=root, check=True,
+            text=True, capture_output=True, timeout=10,
+        )
+        metadata["git_dirty"] = bool(status.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        metadata["git_dirty"] = None
+    try:
+        affinity_cpu_count = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity_cpu_count = int(os.cpu_count() or 1)
+    metadata["cpu"] = {
+        "logical_cpu_count": int(os.cpu_count() or 1),
+        "affinity_cpu_count": int(affinity_cpu_count),
+    }
+    try:
+        import torch
+
+        metadata["cpu"].update(
+            {
+                "torch_num_threads": int(torch.get_num_threads()),
+                "torch_num_interop_threads": int(torch.get_num_interop_threads()),
+            }
+        )
+        metadata["cuda"] = {
+            "available": bool(torch.cuda.is_available()),
+            "torch_cuda": torch.version.cuda,
+            "device_count": torch.cuda.device_count(),
+        }
+        if torch.cuda.is_available():
+            device = torch.cuda.current_device()
+            props = torch.cuda.get_device_properties(device)
+            metadata["cuda"].update(
+                {
+                    "current_device": device,
+                    "gpu_name": torch.cuda.get_device_name(device),
+                    "total_memory_bytes": props.total_memory,
+                }
+            )
+    except Exception as exc:
+        metadata["cuda"] = {"available": False, "error": repr(exc)}
+    return metadata

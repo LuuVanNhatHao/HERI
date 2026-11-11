@@ -1,16 +1,19 @@
 suite:
   name: hera_dgm4_cycle_depth_and_state_refinement
-  base_train_config: config/datasets/dgm4/hera/train.yaml
-  base_evaluate_config: config/datasets/dgm4/hera/evaluate.yaml
-  output_root: outputs/hera_cycle_study
+  base_train_config: config/datasets/dgm4/heri/train.yaml
+  base_evaluate_config: config/datasets/dgm4/heri/evaluate.yaml
+  output_root: artifacts/experiments/reasoning_cycles
   training_epochs: 20
   micro_batch_size: 16
   gradient_accumulation_steps: 1
   fail_fast: true
   variants:
-    - single_pass
-    - two_cycle_static
-    - full_hera
-    - three_cycle_extension
+  - single_pass
+  - two_cycle_static
+  - semantic_refresh_only
+  - hypothesis_refresh_only
+  - initial_hypothesis_control
+  - full_hera
+  - three_cycle_extension
   environment:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True

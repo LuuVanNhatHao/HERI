@@ -1,9 +1,7 @@
 _base_: ../../../dgm4/baselines/b1/train.yaml
-
 project:
-  name: HERA-SAMM-B1
+  name: HERI-SAMM-B1
   config_name: samm/baselines/b1/train
-
 dataset:
   name: SAMM
   root: data/SAMM
@@ -16,34 +14,39 @@ dataset:
     clip_boxes: true
     mask_missing_image_boxes: true
     mask_invalid_text_positions: true
-
 dataset_hashes:
   train: 86ddcace282a029633446ca382523a3867ac2238b846182dda956113283dcbd5
   val: dd5663c7775024bc14741ccb58efba37a0b9033c926365f960756692ea041df0
   test: 2c4d43a67b00ad85805c0ece348433d0a485f138b28344cca002d66957d14552
-
 tokenizer:
   max_length: 128
-
 backbones:
   siglip2:
-    # SigLIP2 has 64 pretrained text positions. DeBERTa retains 128 tokens for
-    # the separate SAMM text-grounding path.
     text_max_length: 64
-
 model:
   hypotheses:
-    order: [SWAP, ATTRIBUTE]
-    image: [SWAP, ATTRIBUTE]
-    text: [SWAP, ATTRIBUTE]
-
+    order:
+    - SWAP
+    - ATTRIBUTE
+    image:
+    - SWAP
+    - ATTRIBUTE
+    text:
+    - SWAP
+    - ATTRIBUTE
 training:
   early_stopping:
-    metric: class_macro_f1
-
+    enabled: false
+    metric: samm_official_cf1
+thresholding:
+  enabled: false
 checkpointing:
-  selection_metric: class_macro_f1
-  tie_breakers: [cf1, map, auc, text_f1, image_mean_iou]
-
+  selection_metric: samm_official_cf1
+  tie_breakers:
+  - samm_official_map
+  - auc
+  - acc_fixed
+  - class_macro_f1
+  - native_cf1_fixed
 output:
-  root: outputs/samm/baseline_b1
+  root: artifacts/experiments/samm/baseline_b1_heri

@@ -1,65 +1,57 @@
 suite:
   name: hera_samm_matched_multiseed
-  protocol_id: samm_matched_multiseed_v1
-  hera_train_config: config/datasets/samm/hera/train.yaml
-  hera_evaluate_config: config/datasets/samm/hera/evaluate.yaml
+  protocol_id: samm_heri_grounded_fixed05
+  hera_train_config: config/datasets/samm/heri/train.yaml
+  hera_evaluate_config: config/datasets/samm/heri/evaluate.yaml
   b1_train_config: config/datasets/samm/baselines/b1/train.yaml
   b1_evaluate_config: config/datasets/samm/baselines/b1/evaluate.yaml
-  output_root: outputs/samm/matched_multiseed
+  output_root: artifacts/experiments/samm/heri_matched_multiseed
   expected_test_samples: 50000
   fail_fast: true
-
-  # Seed 42 is the existing canonical run. Seeds 7 and 21 add two independent
-  # repeats while preserving the frozen dataset protocol seed 777.
   seeds:
-    - 42
-    - 7
-    - 21
-
-  # Prespecified order is enforced by the runner and executed sequentially.
+  - 7
+  - 21
+  - 101
   variants:
-    - hera
-    - b1
-    - no_router
-    - generic_grounding
-
+  - hera
+  - b1
+  - two_cycle_static
+  - no_router
+  - generic_grounding
   aggregate_metrics:
-    - class_accuracy
-    - class_macro_f1
-    - acc
-    - acc_fixed
-    - auc
-    - eer
-    - map
-    - cf1
-    - cf1_fixed
-    - of1
-    - of1_fixed
-    - image_mean_iou
-    - image_iou50
-    - image_iou75
-    - image_iou95
-    - image_presence_f1
-    - image_mean_iou_positive_only
-    - image_iou50_positive_only
-    - image_iou75_positive_only
-    - text_word_f1
-    - text_f1_positive_only
-
-  # Completed seed-42 runs are imported only if their summary and prediction
-  # CSVs pass full dataset/hash/seed/variant/row-count validation.
+  - samm_official_map
+  - samm_official_cf1
+  - samm_official_of1
+  - samm_released_all_sample_image_mean_iou
+  - samm_released_all_sample_image_iou50
+  - samm_released_all_sample_image_iou75
+  - class_accuracy
+  - class_macro_f1
+  - acc
+  - acc_fixed
+  - auc
+  - eer
+  - map
+  - cf1
+  - cf1_fixed
+  - of1
+  - of1_fixed
+  - image_mean_iou
+  - image_iou50
+  - image_iou75
+  - image_iou95
+  - image_presence_f1
+  - image_mean_iou_positive_only
+  - image_iou50_positive_only
+  - image_iou75_positive_only
+  - text_word_f1
+  - text_f1_positive_only
   reuse_summaries:
-    hera:
-      42: outputs/samm/hera_eval/samm_hera_seed42_ontology_image_gate_test/summary.csv
-    # The original B1 seed-42 summary predates ontology-aware image abstention
-    # and cannot be mixed with newly gated runs without its checkpoint.  The
-    # runner therefore trains/evaluates B1 seed 42 again under this protocol.
+    hera: {}
     b1: {}
-
   retention:
     minimum_free_gib_before_train: 55
     delete_last_after_evaluation: true
-    delete_best_after_evaluation: true
-
+    delete_best_after_evaluation: false
   environment:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True

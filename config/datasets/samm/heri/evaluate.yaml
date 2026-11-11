@@ -1,0 +1,57 @@
+_base_: ../../dgm4/heri/evaluate.yaml
+project:
+  name: HERI-SAMM
+  config_name: samm/heri/evaluate
+  run_id: samm_hera_test_evaluation
+dataset:
+  name: SAMM
+  root: data/SAMM
+  train_annotations: data/SAMM/train.json
+  val_annotations: data/SAMM/val.json
+  test_annotations: data/SAMM/test.json
+  image_root: data/SAMM/images
+  jpeg_draft: true
+  annotation_policy:
+    clip_boxes: true
+    mask_missing_image_boxes: true
+    mask_invalid_text_positions: true
+dataset_hashes:
+  train: 86ddcace282a029633446ca382523a3867ac2238b846182dda956113283dcbd5
+  val: dd5663c7775024bc14741ccb58efba37a0b9033c926365f960756692ea041df0
+  test: 2c4d43a67b00ad85805c0ece348433d0a485f138b28344cca002d66957d14552
+tokenizer:
+  max_length: 128
+backbones:
+  siglip2:
+    text_max_length: 64
+model:
+  hypotheses:
+    order:
+    - SWAP
+    - ATTRIBUTE
+    image:
+    - SWAP
+    - ATTRIBUTE
+    text:
+    - SWAP
+    - ATTRIBUTE
+training:
+  epochs: 20
+  early_stopping:
+    enabled: false
+    metric: samm_official_cf1
+thresholding:
+  enabled: false
+checkpointing:
+  selection_metric: samm_official_cf1
+  tie_breakers:
+  - samm_official_map
+  - auc
+  - acc_fixed
+  - class_macro_f1
+  - native_cf1_fixed
+evaluation:
+  checkpoint_resolution:
+    output_root: artifacts/experiments/samm/heri
+output:
+  root: artifacts/experiments/samm/heri_eval

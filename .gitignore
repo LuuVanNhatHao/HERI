@@ -1,35 +1,24 @@
-# Local datasets and extracted assets
-/data/
+# Data and experiment products (documentation stays versioned).
+/data/*
+!/data/README.md
+/artifacts/*
+!/artifacts/README.md
 
-# Generated experiment artifacts
-/outputs/
-/output/
-/logs/
-/runs/
-/checkpoints/
-/artifacts/
-/paper/
-/tmp/
-/.tmp*/
-/wandb/
-/mlruns/
-/tensorboard/
-
-# Keep the frozen HERA-DGM Constitution, ignore other local docs/notes
-/docs/*
-!/docs/HERA_DGM_CONSTITUTION.md
-
-# Python caches and test scratch
+# Python, test and analysis caches.
 __pycache__/
+_pycache/
 *.py[cod]
 *$py.class
 .pytest_cache/
 .pytest_tmp/
+.ruff_cache/
+.uv-cache/
 .coverage
 coverage.xml
 htmlcov/
+.tmp*/
 
-# Virtual environments and package/build artifacts
+# Environments, builds and downloaded model weights.
 .venv/
 venv/
 env/
@@ -37,8 +26,6 @@ ENV/
 build/
 dist/
 *.egg-info/
-
-# Local model/checkpoint/cache files
 *.pt
 *.pth
 *.ckpt
@@ -52,7 +39,7 @@ cache/
 hf_cache/
 .huggingface/
 
-# Local secrets and machine-specific settings
+# Local credentials and editor settings.
 .env
 .env.*
 !.env.example
@@ -61,7 +48,7 @@ hf_cache/
 .vscode/
 .idea/
 
-# OS/editor noise
+# OS and editor noise.
 .DS_Store
 Thumbs.db
 desktop.ini

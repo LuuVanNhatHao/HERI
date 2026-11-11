@@ -1,0 +1,11 @@
+suite:
+  name: hera_samm_evidence_sufficiency_ablation
+  base_train_config: config/datasets/samm/heri/train.yaml
+  base_evaluate_config: config/datasets/samm/heri/evaluate.yaml
+  output_root: artifacts/experiments/samm/evidence_sufficiency_ablation
+  training_epochs: 20
+  fail_fast: true
+  variants:
+  - any_modality_or
+  environment:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True

@@ -1,9 +1,7 @@
 _base_: ../dgm4/prepare.yaml
-
 project:
-  name: HERA-SAMM
+  name: HERI-SAMM
   config_name: samm/prepare
-
 dataset:
   name: SAMM
   root: data/SAMM
@@ -18,19 +16,15 @@ dataset:
     clip_boxes: true
     mask_missing_image_boxes: true
     mask_invalid_text_positions: true
-
 dataset_hashes:
   train: 86ddcace282a029633446ca382523a3867ac2238b846182dda956113283dcbd5
   val: dd5663c7775024bc14741ccb58efba37a0b9033c926365f960756692ea041df0
   test: 2c4d43a67b00ad85805c0ece348433d0a485f138b28344cca002d66957d14552
-
 tokenizer:
   max_length: 128
-
 preflight:
   verify_mtcnn_match: false
   verify_image_headers: false
   image_header_max_samples: 5000
-
 output:
-  root: outputs/samm/data_preflight
+  root: artifacts/data/samm
